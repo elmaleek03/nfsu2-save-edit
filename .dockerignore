@@ -1,0 +1,9 @@
+.git
+.gitignore
+.github
+test
+*.md
+_harness.html
+*.bak
+docker-compose.yml
+Dockerfile

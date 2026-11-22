@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <title>nfsu2save · visitor@elmaleek:~$</title>
+    <meta name="description" content="Edit NFSU2 career save money in the browser. Reads the save file itself or an nfsu2-web backup zip." />
+
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+
+  <body>
+    <div class="terminal">
+      <div class="titlebar">
+        <span class="dot red"></span>
+        <span class="dot yellow"></span>
+        <span class="dot green"></span>
+        <span class="titlebar__title">visitor@elmaleek:~$ nfsu2save</span>
+      </div>
+
+      <nav class="nav">
+        <div class="nav__links">
+          <a href="#" class="is-active" id="nav-editor">~/editor</a>
+          <a href="https://nfsu2mod.xyz/" target="_blank" rel="noreferrer">~/game</a>
+          <a href="#" id="nav-help">?help</a>
+        </div>
+      </nav>
+
+      <main class="page">
+        <header class="head">
+          <p class="head__line"><span class="prompt">visitor@elmaleek:~$</span> nfsu2save --interactive</p>
+          <h1 class="head__title">Underground 2 save editor</h1>
+          <p class="head__sub">
+            Drop one career save or a whole backup zip, edit money, driver name and career stage, and the
+            container checksums are rewritten the way the game expects. Everything runs inside this tab —
+            no upload, no server, no save ever leaves the machine.
+          </p>
+        </header>
+
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="choose a save file or backup zip">
+          <span class="drop__glyph">[+]</span>
+          <span class="drop__text" id="drop-text">drop a career profile or a backup .zip here</span>
+          <span class="drop__hint" id="drop-hint">or click to browse · save file / nfsu2-web backup</span>
+          <input type="file" id="file" accept=".zip,application/zip" hidden />
+        </div>
+
+        <div class="log" id="log" role="log" aria-live="polite"></div>
+
+        <section class="box" id="report" hidden>
+          <div class="box__head">
+            <span class="box__title" id="report-title"></span>
+            <span class="box__meta" id="report-meta"></span>
+          </div>
+
+          <div class="table-wrap">
+            <table class="kv">
+              <tbody id="kv-body"></tbody>
+            </table>
+          </div>
+
+          <div class="box__sub" id="cars-head">cars</div>
+
+          <div class="table-wrap">
+            <table class="kv kv--cars">
+              <thead>
+                <tr>
+                  <th>slot</th>
+                  <th>car type</th>
+                  <th>model key</th>
+                  <th>state</th>
+                </tr>
+              </thead>
+              <tbody id="cars-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="box" id="editor" hidden>
+          <div class="box__head">
+            <span class="box__title">edit</span>
+            <span class="box__meta">money · driver · stage</span>
+          </div>
+
+          <div class="box__body">
+            <div class="row">
+              <label class="row__key" for="money">money</label>
+              <span class="row__prompt">&gt;</span>
+              <input class="row__input" id="money" type="text" inputmode="numeric" spellcheck="false" autocomplete="off" />
+              <button class="btn btn--primary" id="apply-money">apply</button>
+            </div>
+
+            <div class="presets" id="presets">
+              <button class="btn" data-money="1000000">1M</button>
+              <button class="btn" data-money="10000000">10M</button>
+              <button class="btn" data-money="99000000">99M</button>
+              <button class="btn" data-money="max">MAX</button>
+            </div>
+
+            <div class="row">
+              <label class="row__key" for="name">driver</label>
+              <span class="row__prompt">&gt;</span>
+              <input class="row__input" id="name" type="text" maxlength="31" spellcheck="false" autocomplete="off" />
+              <button class="btn btn--primary" id="apply-name">rename</button>
+            </div>
+
+            <div class="row">
+              <label class="row__key" for="stage">stage</label>
+              <span class="row__prompt">&gt;</span>
+              <input class="row__input row__input--short" id="stage" type="text" inputmode="numeric" maxlength="1" spellcheck="false" autocomplete="off" />
+              <span class="dim row__note">0 intro · 1-5 career · 6 post-career</span>
+              <button class="btn btn--primary" id="apply-stage">set</button>
+            </div>
+
+            <hr class="sep" />
+
+            <div class="actions">
+              <button class="btn btn--primary" id="download">download</button>
+              <button class="btn" id="revert">revert</button>
+              <button class="btn" id="reset">unload</button>
+              <span class="dim" id="pending"></span>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="footer__inner">
+          <span class="footer__left">
+            <span class="footer__item footer__branch">⎇ nfsu2</span>
+            <span class="footer__item" id="status-file">no file</span>
+            <span class="footer__item" id="status-crc">crc ·</span>
+          </span>
+          <span class="footer__right">
+            <span class="footer__item footer__ok">●</span>
+            <span class="footer__item">local only</span>
+            <span class="footer__item">no upload</span>
+            <span class="footer__item">vanilla js</span>
+          </span>
+        </div>
+      </footer>
+    </div>
+
+    <script src="core.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

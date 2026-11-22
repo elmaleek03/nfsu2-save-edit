@@ -1,0 +1,373 @@
+'use strict';
+
+/* =========================================================
+   nfsu2save core — no DOM, testable in node
+   Career profiles, N2GA garages, and nfsu2-web backup zips.
+   ========================================================= */
+
+const NFSU2 = (() => {
+  /* ---------- container checksum ----------
+     Not a streaming CRC: the first four bytes of the range seed a big-endian
+     register, inverted on entry and exit.  Same table the game uses.        */
+  const POLY = 0x04c11db7;
+  const TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i << 24;
+      for (let k = 0; k < 8; k++) c = c & 0x80000000 ? (c << 1) ^ POLY : c << 1;
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function nfsu2Crc(d, start = 0, end = d.length) {
+    if (end - start < 4) return 0;
+    const first = ((d[start] << 24) | (d[start + 1] << 16) | (d[start + 2] << 8) | d[start + 3]) >>> 0;
+    let r = ~first >>> 0;
+    for (let i = start + 4; i < end; i++) r = (((r << 8) | d[i]) ^ TABLE[r >>> 24]) >>> 0;
+    return ~r >>> 0;
+  }
+
+  /* ---------- career profile ---------- */
+  const MAGIC = [0x32, 0x30, 0x43, 0x4d]; // the game's four-byte save tag
+  const PROFILE_SIZE = 54966;
+  const MAX_MONEY = 0x7fffffff;
+  const OFF_LEN_A = 0x08;
+  const OFF_LEN_B = 0x0c;
+  const OFF_CRC_A = 0x10;
+  const OFF_CRC_B = 0x14;
+  const OFF_CRC_H = 0x18;
+  const OFF_MONEY = 0xa16a;
+  const OFF_STAGE = 0xa175;
+  const OFF_EVENTS = 0xa179;
+  const OFF_NAME = 0xd225;
+  const NAME_FIELD = 32;
+  const NAME_MAX = 31;
+  const SLOT_BASE = 0x5870;
+  const SLOT_STRIDE = 0x7f2;
+  const SLOT_COUNT = 5;
+  const STAGE_NAMES = [
+    'intro / arrival',
+    'city core',
+    'beacon hill',
+    'jackson heights',
+    'coal harbor west',
+    'coal harbor east',
+    'post-career (all barriers open)',
+  ];
+
+  class SaveError extends Error {}
+
+  class CareerSave {
+    constructor(bytes) {
+      if (!(bytes instanceof Uint8Array)) throw new SaveError('not a byte buffer');
+      if (bytes.length < 0x1c) throw new SaveError('file is smaller than the save header');
+      if (!MAGIC.every((b, i) => bytes[i] === b)) throw new SaveError('not a career save (unexpected tag)');
+      this.bytes = bytes;
+      this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const stored = this.view.getUint32(0x04, true);
+      if (stored !== bytes.length) throw new SaveError(`header says ${stored} bytes, file is ${bytes.length}`);
+      this.lenA = this.view.getUint32(OFF_LEN_A, true);
+      this.lenB = this.view.getUint32(OFF_LEN_B, true);
+      this.blockA = [0x1c, 0x1c + this.lenA];
+      this.blockB = [this.blockA[1], this.blockA[1] + this.lenB];
+      if (this.blockB[1] !== bytes.length) throw new SaveError('block lengths do not add up to the file size');
+    }
+
+    get size() { return this.bytes.length; }
+    get compat() { return this.view.getUint32(0x1c, true); }
+    get money() { return this.view.getInt32(OFF_MONEY, true); }
+    get stage() { return this.view.getUint32(OFF_STAGE, true); }
+    get events() { return this.view.getUint32(OFF_EVENTS, true); }
+
+    checksums() {
+      return {
+        a: nfsu2Crc(this.bytes, this.blockA[0], this.blockA[1]) === this.view.getUint32(OFF_CRC_A, true),
+        b: nfsu2Crc(this.bytes, this.blockB[0], this.blockB[1]) === this.view.getUint32(OFF_CRC_B, true),
+        h: nfsu2Crc(this.bytes, 0, OFF_CRC_H) === this.view.getUint32(OFF_CRC_H, true),
+      };
+    }
+
+    fixChecksums() {
+      this.view.setUint32(OFF_CRC_A, nfsu2Crc(this.bytes, this.blockA[0], this.blockA[1]), true);
+      this.view.setUint32(OFF_CRC_B, nfsu2Crc(this.bytes, this.blockB[0], this.blockB[1]), true);
+      this.view.setUint32(OFF_CRC_H, nfsu2Crc(this.bytes, 0, OFF_CRC_H), true);
+    }
+
+    setMoney(value) {
+      if (!Number.isInteger(value) || value < 0 || value > MAX_MONEY) {
+        throw new SaveError(`money must be a whole number from 0 to ${MAX_MONEY}`);
+      }
+      this.view.setInt32(OFF_MONEY, value, true);
+    }
+
+    setStage(value) {
+      if (!Number.isInteger(value) || value < 0 || value > 6) throw new SaveError('stage must be 0..6');
+      this.view.setUint32(OFF_STAGE, value, true);
+    }
+
+    get name() {
+      const raw = this.bytes.subarray(OFF_NAME, OFF_NAME + NAME_FIELD);
+      const end = raw.indexOf(0);
+      const slice = end < 0 ? raw : raw.subarray(0, end);
+      let out = '';
+      for (const b of slice) out += String.fromCharCode(b);
+      return out;
+    }
+
+    setName(text) {
+      if (typeof text !== 'string' || text.length === 0) throw new SaveError('name cannot be empty');
+      const codes = [...text].map((ch) => ch.codePointAt(0));
+      if (codes.some((c) => c > 0xff)) throw new SaveError('name may only use Latin-1 characters');
+      if (codes.length > NAME_MAX) throw new SaveError(`name is limited to ${NAME_MAX} characters`);
+      for (let i = 0; i < NAME_FIELD; i++) this.bytes[OFF_NAME + i] = i < codes.length ? codes[i] : 0;
+    }
+
+    slots() {
+      const out = [];
+      for (let i = 0; i < SLOT_COUNT; i++) {
+        const base = SLOT_BASE + i * SLOT_STRIDE;
+        if (base + SLOT_STRIDE > this.size) break;
+        out.push({
+          index: i + 1,
+          used: this.view.getUint16(base + 0x27c, true) !== 0,
+          carType: this.view.getUint32(base + 0x14, true),
+          carKey: this.view.getUint32(base + 0x2bc, true),
+          locked: this.bytes[base + 0x428] !== 0,
+          bought: this.bytes[base + 0x429] !== 0,
+        });
+      }
+      return out;
+    }
+  }
+
+  /* ---------- GARAGE.DAT ---------- */
+  function fnv1a64(bytes, start, end) {
+    let h = 0xcbf29ce484222325n;
+    const prime = 0x100000001b3n;
+    const mask = 0xffffffffffffffffn;
+    for (let i = start; i < end; i++) h = ((h ^ BigInt(bytes[i])) * prime) & mask;
+    return h;
+  }
+
+  function readGarage(bytes) {
+    if (bytes.length < 32) return null;
+    if (bytes[0] !== 0x4e || bytes[1] !== 0x32 || bytes[2] !== 0x47 || bytes[3] !== 0x41) return null;
+    const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const low = BigInt(v.getUint32(8, true));
+    const high = BigInt(v.getUint32(12, true));
+    const rest = bytes.length - 32;
+    return {
+      version: v.getUint32(4, true),
+      fingerprint: (high << 32n) | low,
+      records: rest % 5 === 0 ? rest / 5 : null,
+    };
+  }
+
+  /* ---------- zip ---------- */
+  const ZIP_LOCAL = 0x04034b50;
+  const ZIP_CEN = 0x02014b50;
+  const ZIP_EOCD = 0x06054b50;
+
+  const ZIP_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function zipCrc32(bytes) {
+    let c = 0xffffffff;
+    for (let i = 0; i < bytes.length; i++) c = ZIP_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  async function openZip(file) {
+    const tailSize = Math.min(file.size, 0x10000 + 22);
+    const tail = new DataView(await file.slice(file.size - tailSize).arrayBuffer());
+    let eocd = -1;
+    for (let i = tail.byteLength - 22; i >= 0; i--) {
+      if (tail.getUint32(i, true) === ZIP_EOCD) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new SaveError('no zip end-of-central-directory record');
+
+    const count = tail.getUint16(eocd + 10, true);
+    const cdSize = tail.getUint32(eocd + 12, true);
+    const cdOffset = tail.getUint32(eocd + 16, true);
+    if (count === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) {
+      throw new SaveError('zip64 archives are not supported');
+    }
+
+    const cdBuf = await file.slice(cdOffset, cdOffset + cdSize).arrayBuffer();
+    const cd = new DataView(cdBuf);
+    const dec = new TextDecoder('utf-8');
+    const entries = [];
+    let p = 0;
+
+    for (let i = 0; i < count; i++) {
+      if (cd.getUint32(p, true) !== ZIP_CEN) throw new SaveError('corrupt zip central directory');
+      const nameLen = cd.getUint16(p + 28, true);
+      const extraLen = cd.getUint16(p + 30, true);
+      const commentLen = cd.getUint16(p + 32, true);
+      entries.push({
+        name: dec.decode(new Uint8Array(cdBuf, p + 46, nameLen)),
+        method: cd.getUint16(p + 10, true),
+        time: cd.getUint16(p + 12, true),
+        date: cd.getUint16(p + 14, true),
+        crc: cd.getUint32(p + 16, true),
+        csize: cd.getUint32(p + 20, true),
+        usize: cd.getUint32(p + 24, true),
+        local: cd.getUint32(p + 42, true),
+        dataOffset: 0,
+      });
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+
+    for (const e of entries) {
+      const lh = new DataView(await file.slice(e.local, e.local + 30).arrayBuffer());
+      if (lh.getUint32(0, true) !== ZIP_LOCAL) throw new SaveError(`bad local header for ${e.name}`);
+      e.dataOffset = e.local + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
+    }
+
+    return { file, entries };
+  }
+
+  function profileEntries(zip) {
+    return zip.entries.filter((e) => {
+      const segs = e.name.split('/');
+      return !e.name.endsWith('/')
+        && segs.length >= 2
+        && segs[segs.length - 1] === segs[segs.length - 2]
+        && e.usize === PROFILE_SIZE;
+    });
+  }
+
+  async function entryBytes(zip, entry) {
+    const blob = zip.file.slice(entry.dataOffset, entry.dataOffset + entry.csize);
+    if (entry.method === 0) return new Uint8Array(await blob.arrayBuffer());
+    if (entry.method !== 8) throw new SaveError(`unsupported compression in ${entry.name}`);
+    if (typeof DecompressionStream !== 'function') throw new SaveError('this browser cannot inflate zip entries');
+    const stream = blob.stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  /* Rebuild the archive with one entry replaced.  Untouched entries are sliced
+     straight out of the original file, so a 400 MB backup never lands in RAM. */
+  function buildZip(zip, replacedName, replacedBytes) {
+    const enc = new TextEncoder();
+    const parts = [];
+    const central = [];
+    let offset = 0;
+
+    for (const e of zip.entries) {
+      const nameBytes = enc.encode(e.name);
+      let method = e.method;
+      let crc = e.crc;
+      let csize = e.csize;
+      let usize = e.usize;
+      let payload;
+
+      if (e.name === replacedName) {
+        method = 0;
+        crc = zipCrc32(replacedBytes);
+        csize = usize = replacedBytes.length;
+        payload = new Blob([replacedBytes]);
+      } else {
+        payload = zip.file.slice(e.dataOffset, e.dataOffset + e.csize);
+      }
+
+      const flags = 0x0800;
+      const local = new Uint8Array(30 + nameBytes.length);
+      const lv = new DataView(local.buffer);
+      lv.setUint32(0, ZIP_LOCAL, true);
+      lv.setUint16(4, 20, true);
+      lv.setUint16(6, flags, true);
+      lv.setUint16(8, method, true);
+      lv.setUint16(10, e.time, true);
+      lv.setUint16(12, e.date, true);
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, csize, true);
+      lv.setUint32(22, usize, true);
+      lv.setUint16(26, nameBytes.length, true);
+      lv.setUint16(28, 0, true);
+      local.set(nameBytes, 30);
+      parts.push(local, payload);
+
+      const cen = new Uint8Array(46 + nameBytes.length);
+      const cv = new DataView(cen.buffer);
+      cv.setUint32(0, ZIP_CEN, true);
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, flags, true);
+      cv.setUint16(10, method, true);
+      cv.setUint16(12, e.time, true);
+      cv.setUint16(14, e.date, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, csize, true);
+      cv.setUint32(24, usize, true);
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint32(42, offset, true);
+      cen.set(nameBytes, 46);
+      central.push(cen);
+
+      offset += 30 + nameBytes.length + csize;
+    }
+
+    const cdSize = central.reduce((n, c) => n + c.length, 0);
+    const eocd = new Uint8Array(22);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, ZIP_EOCD, true);
+    ev.setUint16(8, zip.entries.length, true);
+    ev.setUint16(10, zip.entries.length, true);
+    ev.setUint32(12, cdSize, true);
+    ev.setUint32(16, offset, true);
+
+    return new Blob([...parts, ...central, eocd], { type: 'application/zip' });
+  }
+
+  /* ---------- text helpers ---------- */
+  const fmt = new Intl.NumberFormat('en-US');
+  const moneyText = (v) => (v < 0 ? String(v) : `$${fmt.format(v)}`);
+
+  function parseMoneyInput(text) {
+    const raw = String(text).trim().toLowerCase().replace(/[$,\s_]/g, '');
+    if (raw === 'max' || raw === 'full') return MAX_MONEY;
+    if (!/^\d+$/.test(raw)) throw new SaveError('money must be digits, 1_000_000, $1,000,000 or max');
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value > MAX_MONEY) throw new SaveError(`money must be 0..${MAX_MONEY}`);
+    return value;
+  }
+
+  function changedRanges(a, b) {
+    if (a.length !== b.length) return [[0, Math.max(a.length, b.length)]];
+    const out = [];
+    let start = -1;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        if (start < 0) start = i;
+      } else if (start >= 0) {
+        out.push([start, i]);
+        start = -1;
+      }
+    }
+    if (start >= 0) out.push([start, a.length]);
+    return out;
+  }
+
+  const hex = (n, width) => '0x' + n.toString(16).toUpperCase().padStart(width, '0');
+  const crcText = (c) => `A ${c.a ? 'ok' : 'BAD'} · B ${c.b ? 'ok' : 'BAD'} · header ${c.h ? 'ok' : 'BAD'}`;
+
+  return {
+    SaveError, CareerSave,
+    nfsu2Crc, zipCrc32, fnv1a64, readGarage,
+    openZip, entryBytes, buildZip, profileEntries,
+    moneyText, parseMoneyInput, changedRanges, hex, crcText,
+    MAGIC, PROFILE_SIZE, MAX_MONEY, NAME_MAX, STAGE_NAMES,
+  };
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = NFSU2;
+if (typeof window !== 'undefined') window.NFSU2 = NFSU2;

@@ -1,0 +1,32 @@
+services:
+  editor:
+    build: .
+    image: nfsu2-save-editor:0.1.0
+    container_name: nfsu2-save-editor
+    restart: unless-stopped
+
+    # host 8007 -> container 8080 (nginx-unprivileged)
+    ports:
+      - "8007:8080"
+
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+    # Extra hardening once you have verified the stack starts: this image is
+    # built to run with a read-only root filesystem.
+    # read_only: true
+    # tmpfs:
+    #   - /tmp:size=8m
