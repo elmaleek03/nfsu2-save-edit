@@ -200,11 +200,16 @@ function carState(slot) {
 
 function carRow(slot) {
   const status = carState(slot);
+  const label = slot.used ? N.carLabel(slot.carType) : null;
   const tr = document.createElement('tr');
+  if (slot.used) {
+    tr.title = `${N.carName(slot.carType) || 'unknown car'} · ${N.hex(slot.carType, 8)} · key ${N.hex(slot.carKey, 8)}`;
+  }
   const cells = [
     ['k', String(slot.index), ''],
-    ['v', slot.used ? N.hex(slot.carType, 8) : '—', slot.used ? 'v--hashed' : 'v--idle'],
-    ['v', slot.used ? N.hex(slot.carKey, 8) : '—', slot.used ? '' : 'v--idle'],
+    ['v', slot.used ? (label || 'unknown') : '—', slot.used ? (label ? 'v--car' : 'v--warn') : 'v--idle'],
+    ['v', slot.used ? N.hex(slot.carType, 8) : '—', 'v--idle'],
+    ['v', slot.used ? N.hex(slot.carKey, 8) : '—', 'v--idle'],
     ['v', status, status === 'empty' ? 'v--idle' : status === 'owned' ? '' : 'v--warn'],
   ];
   for (const [cls, text, extra] of cells) {
@@ -220,7 +225,7 @@ function groupRow(label) {
   const tr = document.createElement('tr');
   tr.className = 'rowgroup';
   const td = document.createElement('td');
-  td.colSpan = 4;
+  td.colSpan = 5;
   td.textContent = label;
   tr.appendChild(td);
   return tr;
@@ -231,7 +236,7 @@ function toggleRow(label, expandable) {
   tr.className = 'rowtoggle';
   if (expandable) tr.dataset.toggleEmpty = '1';
   const td = document.createElement('td');
-  td.colSpan = 4;
+  td.colSpan = 5;
   td.textContent = label;
   tr.appendChild(td);
   return tr;

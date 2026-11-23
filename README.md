@@ -45,6 +45,12 @@ empty and its payload starts 8 bytes in, so the same offsets apply as in a
 career slot (`+0x14` car type, `+0x2BC` model key, `+0x27C` used flag).
 
 The report lists them all, with the empty tail collapsed into one clickable row.
+Each row shows the car's own asset name next to the raw hash: a car type is
+`bStringHash` of the name (`h = 0xFFFFFFFF`, then `h = h*33 + byte` per upper-case
+character), and the table holds the 97 `CARS\<name>` entries this build loads —
+stock cars plus the mod's add-ons. A hash outside that set shows as `unknown`
+rather than a guess.
+
 Editing money touches neither the car records (`0x5868-0x8022`) nor the
 fingerprinted range, and the log says so on every edit: `cars untouched ·
 garage still paired`. If a future field ever did reach the cars, that line turns

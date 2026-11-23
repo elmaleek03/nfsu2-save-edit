@@ -54,6 +54,14 @@ async function main() {
   assert.deepEqual(ranges, [[0x14, 0x1c], [0xa16a, 0xa16e]]);
   ok('money edit touches 0x14..0x1C and 0x0A16A..0x0A16E only');
 
+  // car names come from the game's own asset names
+  assert.equal(N.bStringHash('240SX'), 0x0150fb80);
+  assert.equal(N.carName(0x0150fb80), '240SX');
+  assert.equal(N.carName(0xdeadbeef), null);
+  const usedCareer = save.slots().filter((s) => s.used);
+  const named = usedCareer.filter((s) => N.carName(s.carType));
+  ok(`car names resolve for ${named.length}/${usedCareer.length} career slots`);
+
   // name + stage
   save.setName('MALEEK');
   save.setStage(4);

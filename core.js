@@ -141,6 +141,75 @@ const NFSU2 = (() => {
     }
   }
 
+  /* ---------- car names ----------
+     A car type is bStringHash(car asset name): h = 0xFFFFFFFF, then h = h*33 +
+     byte per character, uppercase. The names below are the CARS\<name> folders
+     the game loads (stock cars plus this build's add-ons), harvested from the
+     game data, so a lookup either resolves exactly or not at all. */
+  const CAR_NAMES = [
+    '200SXS14A', '240SX', '3000GT', '300ZX', '350Z', '4DR_SEDAN', '4DR_SEDAN02', '959', '996', 'A3',
+    'ACCORD', 'AMBULANCE', 'BB6', 'BMW850', 'BOXSTER986', 'BUS', 'CELICA', 'CELICAT205', 'CHARGER',
+    'CIVIC', 'CIVICEG', 'CIVICEK9', 'COBRA', 'COROLLA', 'CORSA', 'CORVETTEC5', 'COUPE', 'CRXDS',
+    'CRXSIR', 'E36', 'ECLIPSE', 'ECLIPSE03', 'ELISE', 'ESCALADE', 'ESCORT', 'EVO9IX', 'FAIRZ',
+    'FIRETRUCK', 'FOCUS', 'FTOGPR', 'G35', 'G55', 'GOLF', 'GS300', 'GT86ZN', 'GTI3', 'GTO',
+    'HATCHBACK', 'HATCHBACK02', 'HUMMER', 'IF', 'IMPALA', 'IMPREZA', 'IMPREZAWRX', 'INFIFX45',
+    'INTEGRA', 'IS300', 'LANCER', 'LANCEREVO4', 'LANCEREVO8', 'LEONCP', 'LFA', 'LOCK', 'M3GTR',
+    'MERC560SE', 'MIATA', 'MINIVAN', 'MR2AW1', 'MRS', 'MUSTANGGT', 'NAVIGATOR', 'NEONC', 'NSX',
+    'NSX91', 'PANELVAN', 'PARCELVAN', 'PEUGOT', 'PEUGOT106', 'PICKUP', 'R33', 'RSX', 'RX7', 'RX8',
+    'S2000', 'SAVANNA', 'SC300Z30', 'SENTRA', 'SILVIA', 'SKYLINE', 'SUPRA', 'SUPRAGA70', 'SUV',
+    'TAXI', 'TAXI02', 'TIBURON', 'TT', 'VIPER',
+  ];
+
+  /* Only the codes that read badly keep a short label; everything else shows
+     the asset name the game itself uses. */
+  const CAR_LABELS = {
+    MERC560SE: '560 SEC',
+    MR2AW1: 'MR2 AW11',
+    E36: 'M3 E36',
+    BB6: 'Prelude BB6',
+    CELICAT205: 'Celica GT-Four',
+    EVO9IX: 'Lancer Evo IX',
+    LANCEREVO4: 'Lancer Evo IV',
+    LANCEREVO8: 'Lancer Evo VIII',
+    SUPRAGA70: 'Supra GA70',
+    '200SXS14A': '200SX S14a',
+    BOXSTER986: 'Boxster 986',
+    CORVETTEC5: 'Corvette C5',
+    IMPREZAWRX: 'Impreza WRX',
+    MUSTANGGT: 'Mustang GT',
+    CIVICEG: 'Civic EG6',
+    CIVICEK9: 'Civic EK9',
+    GTI3: 'Golf GTI Mk3',
+    CRXDS: 'CRX del Sol',
+    FTOGPR: 'FTO GP',
+    INFIFX45: 'FX45',
+    ECLIPSE03: 'Eclipse 03',
+    NSX91: 'NSX NA1',
+    PICKUP: 'pickup',
+    '4DR_SEDAN': 'sedan',
+    '4DR_SEDAN02': 'sedan 02',
+  };
+
+  function bStringHash(text) {
+    let h = 0xffffffff;
+    for (const ch of text) h = (Math.imul(h, 33) + ch.charCodeAt(0)) >>> 0;
+    return h;
+  }
+
+  const CAR_BY_HASH = new Map(CAR_NAMES.map((name) => [bStringHash(name), name]));
+
+  /** Asset name for a car type, or null when this build has no such car. */
+  function carName(type) {
+    return CAR_BY_HASH.get(type >>> 0) || null;
+  }
+
+  /** Short label for the table: the label if any, else the asset name. */
+  function carLabel(type) {
+    const name = carName(type);
+    if (!name) return null;
+    return CAR_LABELS[name] || name;
+  }
+
   /* ---------- GARAGE.DAT ----------
      The file is a 32-byte header followed by one 2,034-byte record per garage
      slot. nfsu2-web writes 5 records (slots 6-10); the nfsu2mod fork writes 20
@@ -390,6 +459,7 @@ const NFSU2 = (() => {
     nfsu2Crc, zipCrc32, fnv1a64, readGarage,
     openZip, entryBytes, buildZip, profileEntries,
     moneyText, parseMoneyInput, changedRanges, hex, crcText,
+    bStringHash, carName, carLabel, CAR_NAMES,
     MAGIC, PROFILE_SIZE, MAX_MONEY, NAME_MAX, STAGE_NAMES,
     GARAGE_FIRST_SLOT, GARAGE_RECORD,
   };
