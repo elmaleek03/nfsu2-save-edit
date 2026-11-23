@@ -148,6 +148,11 @@ async function loadZip(file) {
   say(`  ${zip.entries.length} entries · profile ${pick.name}`, 'dim');
   renderReport();
   showEditor(true);
+  const rename = pendingRename();
+  if (rename) {
+    say(`  driver "${save.name}" but the folder is "${pick.name.split('/').slice(-1)[0]}"`, 'out');
+    say(`  download renames it to ${rename.profile}`, 'out');
+  }
   say('');
   say('download returns the same archive with only those bytes changed', 'dim');
   say("restore: Saves → Restore → pick the download → Keep this browser's", 'dim');
@@ -225,6 +230,17 @@ function pendingRename() {
     profile: `${base}${name}/${name}`,
     garage: state.garageEntry ? `${base}${name}/GARAGE.DAT` : null,
   };
+}
+
+/* Every entry that carries the profile name as a path segment (or a
+   "<name>.txt" basename) has to move too: the game's profile folder, plus the
+   mod's endless-career folder and carlot file, which are keyed by the same name. */
+function renamePath(path, from, to) {
+  return path.split('/').map((segment) => {
+    if (segment === from) return to;
+    if (segment.startsWith(`${from}.`)) return `${to}${segment.slice(from.length)}`;
+    return segment;
+  }).join('/');
 }
 
 function carState(slot) {
@@ -688,8 +704,14 @@ function download() {
       }
       let renames = null;
       if (rename) {
+        const oldName = state.entry.name.split('/').slice(-1)[0];
         renames = new Map([[state.entry.name, rename.profile]]);
         if (state.garageEntry && rename.garage) renames.set(state.garageEntry, rename.garage);
+        for (const e of state.zip.entries) {
+          if (renames.has(e.name)) continue;
+          const next = renamePath(e.name, oldName, rename.name);
+          if (next !== e.name) renames.set(e.name, next);
+        }
       }
       const blob = N.buildZip(state.zip, replacements, renames);
       const name = state.file.name.replace(/\.zip$/i, '') + '-edited.zip';
@@ -698,9 +720,13 @@ function download() {
       say('  every other entry is copied through untouched', 'dim');
       if (relinked) say('  GARAGE.DAT fingerprint re-linked to the edited profile', 'ok');
       if (rename) {
-        say(`  renamed entries -> ${rename.profile}`, 'ok');
-        state.entry.name = rename.profile;
+        say(`  renamed ${renames.size} entr${renames.size === 1 ? 'y' : 'ies'} -> ${rename.profile}`, 'ok');
+        for (const e of state.zip.entries) {
+          const next = renames.get(e.name);
+          if (next) e.name = next;
+        }
         if (state.garageEntry && rename.garage) state.garageEntry = rename.garage;
+        renderReport();
       }
     } else {
       const name = state.file.name + '-edited';
