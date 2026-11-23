@@ -222,6 +222,21 @@ const NFSU2 = (() => {
       };
     }
 
+    /* A rising curve: neutral at the lowest RPM, max at the highest. */
+    fillCurveRamp(index) {
+      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
+      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
+      const step = (MAX_TUNE_BYTE - NEUTRAL_BYTE) / (CURVE_POINTS - 1);
+      for (let s = 0; s < SETUP_COUNT; s++) {
+        const off = base + TUNING_OFF + s * SETUP_SIZE;
+        for (let i = 0; i < CURVE_POINTS; i++) {
+          const v = Math.round(NEUTRAL_BYTE + step * i);
+          this.bytes[off + ECU_OFF + i] = v;
+          this.bytes[off + TURBO_OFF + i] = v;
+        }
+      }
+    }
+
     /** Writes a 205-byte tuning block (5 setups) into a career slot. */
     writeTune(index, block) {
       if (block.length !== SETUP_COUNT * SETUP_SIZE) throw new SaveError('tuning block must be 205 bytes');
@@ -230,11 +245,20 @@ const NFSU2 = (() => {
       this.bytes.set(block, base + TUNING_OFF);
     }
 
-    /** Sets all five setups to one curve value (100 neutral, 200 max). */
-    fillTune(index, value) {
-      const block = new Uint8Array(SETUP_COUNT * SETUP_SIZE);
-      block.fill(value);
-      this.writeTune(index, block);
+    /* Writes one value into the nine ECU and nine turbo curve points of every
+       setup and nothing else - the other 23 bytes of each 41-byte setup are
+       separate scalars and stay as they are. Points are written from the
+       highest-RPM end backwards, so the top of the curve is set first. */
+    fillCurves(index, value) {
+      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
+      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
+      for (let s = 0; s < SETUP_COUNT; s++) {
+        const off = base + TUNING_OFF + s * SETUP_SIZE;
+        for (let i = CURVE_POINTS - 1; i >= 0; i--) {
+          this.bytes[off + ECU_OFF + i] = value;
+          this.bytes[off + TURBO_OFF + i] = value;
+        }
+      }
     }
 
     setUniques(index, on) {

@@ -314,12 +314,13 @@ function tuneRow(slot) {
     s.textContent = text;
     return s;
   };
-  const button = (act, text) => {
+  const button = (act, text, title) => {
     const b = document.createElement('button');
     b.className = 'btn';
     b.dataset.act = act;
     b.dataset.slot = String(slot.index);
     b.textContent = text;
+    if (title) b.title = title;
     return b;
   };
 
@@ -328,8 +329,9 @@ function tuneRow(slot) {
     value(`ecu ${Math.min(...ecu)}-${Math.max(...ecu)} · turbo ${Math.min(...turbo)}-${Math.max(...turbo)}`
       + (tuned ? '' : ' · stock')),
     ' ',
-    button('tune-max', 'max'),
-    button('tune-stock', 'stock'),
+    button('tune-max', 'max', 'all 9 ECU + 9 turbo points of the 5 setups = 200, highest rpm first; scalars untouched'),
+    button('tune-ramp', 'ramp', 'ECU/turbo rise from 100 at the lowest rpm to 200 at the highest'),
+    button('tune-stock', 'stock', 'all 9 ECU + 9 turbo points back to 100 (neutral)'),
     button('tune-save', 'save as preset'),
   ));
 
@@ -594,9 +596,11 @@ function hexToBytes(hex) {
 function handleTuneAct(act, slotIndex) {
   if (!state.save || !slotIndex) return;
   if (act === 'tune-max') {
-    commit(`dyno max · slot ${slotIndex}`, (s) => s.fillTune(slotIndex, N.MAX_TUNE_BYTE), { car: true });
+    commit(`dyno max (ecu + turbo) · slot ${slotIndex}`, (s) => s.fillCurves(slotIndex, N.MAX_TUNE_BYTE), { car: true });
+  } else if (act === 'tune-ramp') {
+    commit(`dyno ramp (neutral -> max at high rpm) · slot ${slotIndex}`, (s) => s.fillCurveRamp(slotIndex), { car: true });
   } else if (act === 'tune-stock') {
-    commit(`dyno stock · slot ${slotIndex}`, (s) => s.fillTune(slotIndex, N.NEUTRAL_BYTE), { car: true });
+    commit(`dyno neutral (ecu + turbo) · slot ${slotIndex}`, (s) => s.fillCurves(slotIndex, N.NEUTRAL_BYTE), { car: true });
   } else if (act === 'uniques-on') {
     commit(`uniques all · slot ${slotIndex}`, (s) => s.setUniques(slotIndex, true), { car: true });
   } else if (act === 'uniques-off') {

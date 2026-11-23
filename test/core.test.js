@@ -80,15 +80,40 @@ async function main() {
   const tune0 = scratch.slotTune(1);
   assert.equal(tune0.setups.length, N.SETUP_COUNT);
   assert.equal(tune0.block.length, N.SETUP_COUNT * N.SETUP_SIZE);
-  scratch.fillTune(1, N.MAX_TUNE_BYTE);
+  const blockBefore = tune0.block.slice();
+  scratch.fillCurves(1, N.MAX_TUNE_BYTE);
   scratch.setUniques(1, true);
   scratch.fixChecksums();
   const tuned = scratch.slotTune(1);
   assert.ok(tuned.setups.every((s) => s.ecu.every((v) => v === N.MAX_TUNE_BYTE)
     && s.turbo.every((v) => v === N.MAX_TUNE_BYTE)));
   assert.equal(tuned.uniques.filter(Boolean).length, 9);
+  // only the 18 curve bytes of each 41-byte setup may move
+  for (let s = 0; s < N.SETUP_COUNT; s++) {
+    const from = s * N.SETUP_SIZE;
+    for (let j = 0; j < N.SETUP_SIZE; j++) {
+      const isCurve = j >= 0x17 && j < 0x29;
+      if (!isCurve) {
+        assert.equal(tuned.block[from + j], blockBefore[from + j], `setup ${s} byte +0x${j.toString(16)} changed`);
+      }
+    }
+  }
   assert.ok(Object.values(scratch.checksums()).every(Boolean));
-  ok('dyno max + nine uniques write cleanly into slot 1');
+  ok('dyno max writes only ECU/turbo points, setup scalars untouched');
+
+  // the ramp keeps the low end neutral and ends at the max
+  const ramp = new N.CareerSave(bytes.slice());
+  ramp.fillCurveRamp(1);
+  const rampTune = ramp.slotTune(1);
+  for (const setup of rampTune.setups) {
+    assert.equal(setup.ecu[0], N.NEUTRAL_BYTE);
+    assert.equal(setup.ecu.at(-1), N.MAX_TUNE_BYTE);
+    assert.equal(setup.turbo[0], N.NEUTRAL_BYTE);
+    assert.equal(setup.turbo.at(-1), N.MAX_TUNE_BYTE);
+    assert.deepEqual(setup.ecu, setup.turbo);
+    assert.deepEqual(setup.ecu, [...setup.ecu].sort((a, b) => a - b));
+  }
+  ok('dyno ramp rises 100 -> 200, highest rpm maxed');
 
   // name + stage
   save.setName('MALEEK');

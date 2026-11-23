@@ -66,9 +66,18 @@ The `progress` row counts stage completion: each stage record at `0x9962` holds
 Each car carries five 41-byte dyno setups at `+0x354` — Circuit, Drag, Drift,
 Street X, URL. A setup holds a 9-point ECU curve at `+0x17` and a 9-point turbo
 curve at `+0x20`. `100` (0x64) is neutral; `200` (0xC8) is the highest value the
-game still uses, so `[max]` writes 200 across all 90 curve bytes and `[stock]`
-writes 100. The nine outrun-unique dwords at `+0x2E8` are the "gold" upgrades;
-`[all]` writes 1 to each, `[none]` clears them.
+game still uses. The buttons only ever touch those 18 curve bytes per setup —
+the other 23 bytes are separate scalars and stay byte-identical (a regression
+test asserts exactly that on a save whose scalars are not neutral).
+
+- `[max]` — all 9 ECU and 9 turbo points = 200, written from the highest-RPM
+  point backwards so the top of the curve is maxed first.
+- `[ramp]` — neutral at the lowest RPM rising to 200 at the highest:
+  `100 113 125 138 150 163 175 188 200`.
+- `[stock]` — the same points back to 100.
+
+The nine outrun-unique dwords at `+0x2E8` are the "gold" upgrades; `[all]` writes
+1 to each, `[none]` clears them.
 
 `[save as preset]` stores a car's whole 205-byte tuning block plus its nine
 uniques in this browser (`localStorage`), and every other car gets an
