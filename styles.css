@@ -259,6 +259,18 @@ table.kv--cars td:nth-child(4) { width: 12ch; }
 table.kv--cars th:nth-child(3),
 table.kv--cars th:nth-child(4) { width: 12ch; }
 table.kv--cars td.v--car { color: var(--text); }
+
+table.kv--cars tr.carrow { cursor: pointer; }
+table.kv--cars tr.carrow:hover td { background: var(--mantle); }
+table.kv--cars tr.cardetail td {
+  padding: 6px 12px 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--subtext);
+  background: rgba(24, 24, 37, 0.7);
+}
+table.kv--cars tr.cardetail .k { color: var(--overlay); }
+table.kv--cars tr.cardetail .v { color: var(--text); font-variant-numeric: tabular-nums; }
 table.kv--cars td.v { font-size: 12px; }
 table.kv td.v--idle { color: var(--overlay); }
 table.kv td.v--hashed { color: var(--blue); }

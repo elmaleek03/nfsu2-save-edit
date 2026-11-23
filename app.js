@@ -25,6 +25,7 @@ const state = {
   original: null,  // untouched profile bytes
   save: null,      // working copy
   showEmpty: false, // reveal empty car slots in the report
+  detailSlot: null, // slot number whose per-car detail is open
 };
 
 const el = {
@@ -203,6 +204,8 @@ function carRow(slot) {
   const label = slot.used ? N.carLabel(slot.carType) : null;
   const tr = document.createElement('tr');
   if (slot.used) {
+    tr.className = 'carrow';
+    tr.dataset.slot = String(slot.index);
     tr.title = `${N.carName(slot.carType) || 'unknown car'} · ${N.hex(slot.carType, 8)} · key ${N.hex(slot.carKey, 8)}`;
   }
   const cells = [
@@ -218,6 +221,35 @@ function carRow(slot) {
     td.textContent = text;
     tr.appendChild(td);
   }
+  return tr;
+}
+
+function detailRow(slot) {
+  const detail = state.save ? state.save.slotDetail(slot.index) : null;
+  if (!detail) return null;
+  const tr = document.createElement('tr');
+  tr.className = 'cardetail';
+  const td = document.createElement('td');
+  td.colSpan = 5;
+  const items = [
+    ['value', N.moneyText(detail.value)],
+    ['parts', `${detail.parts}/170`],
+    ['items', `${detail.items}/68`],
+    ['uniques', `${detail.uniques}/9`],
+    ['dyno', `${detail.dyno}/5`],
+    ['handle', N.hex(detail.handle, 8)],
+  ];
+  items.forEach(([key, value], i) => {
+    if (i) td.append(' · ');
+    const k = document.createElement('span');
+    k.className = 'k';
+    k.textContent = key;
+    const v = document.createElement('span');
+    v.className = 'v';
+    v.textContent = ` ${value}`;
+    td.append(k, v);
+  });
+  tr.appendChild(td);
   return tr;
 }
 
@@ -290,6 +322,7 @@ function renderReport() {
     kvRow('checksums', crcCell(c), ok ? 'v--ok' : 'v--warn'),
     kvRow('driver', save.name || '(empty)'),
     kvRow('stage', `${save.stage} · ${N.STAGE_NAMES[save.stage] || 'unknown'}`),
+    kvRow('progress', `${save.stages().filter(Boolean).length} / ${save.stages().length} stages complete`),
     kvRow('money', N.moneyText(save.money), 'v--money'),
     kvRow('events', `${save.events} active entries`),
     kvRow('cars', garageSlots.length
@@ -310,7 +343,7 @@ function renderReport() {
   el.kvBody.replaceChildren(...rows);
 
   el.carsHead.textContent = garageSlots.length
-    ? `cars · ${used} of ${all.length} in use`
+    ? `cars · ${used} of ${all.length} in use · click a car`
     : 'cars';
 
   const body = [];
@@ -318,7 +351,14 @@ function renderReport() {
   const addGroup = (label, list) => {
     body.push(groupRow(label));
     const empty = list.filter((s) => !s.used);
-    for (const slot of list) if (slot.used) body.push(carRow(slot));
+    for (const slot of list) {
+      if (!slot.used) continue;
+      body.push(carRow(slot));
+      if (state.detailSlot === slot.index) {
+        const detail = detailRow(slot);
+        if (detail) body.push(detail);
+      }
+    }
     if (!empty.length) return;
     if (state.showEmpty) {
       for (const slot of empty) body.push(carRow(slot));
@@ -390,6 +430,7 @@ function resetState() {
   state.original = null;
   state.save = null;
   state.showEmpty = false;
+  state.detailSlot = null;
 }
 
 function commit(label, apply) {
@@ -537,9 +578,17 @@ el.stage.addEventListener('input', () => el.stage.classList.add('is-dirty'));
 el.download.addEventListener('click', download);
 
 el.carsBody.addEventListener('click', (e) => {
-  if (!e.target.closest('tr[data-toggle-empty]')) return;
-  state.showEmpty = !state.showEmpty;
-  renderReport();
+  const car = e.target.closest('tr.carrow');
+  if (car) {
+    const index = Number(car.dataset.slot);
+    state.detailSlot = state.detailSlot === index ? null : index;
+    renderReport();
+    return;
+  }
+  if (e.target.closest('tr[data-toggle-empty]')) {
+    state.showEmpty = !state.showEmpty;
+    renderReport();
+  }
 });
 
 el.revert.addEventListener('click', () => {

@@ -46,6 +46,8 @@ const NFSU2 = (() => {
   const SLOT_BASE = 0x5870;
   const SLOT_STRIDE = 0x7f2;
   const SLOT_COUNT = 5;
+  const STAGE_BASE = 0x9962;
+  const STAGE_STRIDE = 0x101;
   const STAGE_NAMES = [
     'intro / arrival',
     'city core',
@@ -136,6 +138,51 @@ const NFSU2 = (() => {
           locked: this.bytes[base + 0x428] !== 0,
           bought: this.bytes[base + 0x429] !== 0,
         });
+      }
+      return out;
+    }
+
+    /* Per-slot numbers that are read-only for now: what was spent on the car,
+       how much of it is non-default, and its CAREER_SLOT handle. */
+    slotDetail(index) {
+      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
+      if (base + SLOT_STRIDE > this.size) return null;
+      const v = this.view;
+      let parts = 0;
+      for (let i = 0; i < 170; i++) if (v.getUint32(base + 0x18 + i * 4, true) !== 0) parts += 1;
+      let items = 0;
+      for (let i = 0; i < 68; i++) if (this.bytes[base + 0x310 + i] !== 0) items += 1;
+      let uniques = 0;
+      for (let i = 0; i < 9; i++) if (v.getUint32(base + 0x2e8 + i * 4, true) !== 0) uniques += 1;
+      let dyno = 0;
+      for (let i = 0; i < 5; i++) {
+        const start = base + 0x354 + i * 41;
+        for (let j = 0; j < 41; j++) {
+          if (this.bytes[start + j] !== 0) {
+            dyno += 1;
+            break;
+          }
+        }
+      }
+      return {
+        value: v.getUint32(base + 0x6be, true),
+        parts,
+        items,
+        uniques,
+        dyno,
+        handle: v.getUint32(base - 4, true),
+      };
+    }
+
+    /* Stage completion: eight 0x101-byte records at 0x9962, stage i's record
+       holding 1 at +0xFC once the stage is done. Only 0-5 are used; verified
+       against a stage-0 save (all zero) and a stage-6 save (all one). */
+    stages() {
+      const out = [];
+      for (let i = 0; i < 6; i++) {
+        const base = STAGE_BASE + i * STAGE_STRIDE;
+        if (base + STAGE_STRIDE > this.size) break;
+        out.push(this.bytes[base + 0xfc] === 1);
       }
       return out;
     }

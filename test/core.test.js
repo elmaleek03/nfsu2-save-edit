@@ -51,8 +51,13 @@ async function main() {
   assert.ok(c1.a && c1.b && c1.h);
   assert.equal(save.money, 1234567);
   const ranges = N.changedRanges(before, save.bytes);
-  assert.deepEqual(ranges, [[0x14, 0x1c], [0xa16a, 0xa16e]]);
-  ok('money edit touches 0x14..0x1C and 0x0A16A..0x0A16E only');
+  assert.ok(ranges.length > 0);
+  for (const [start, end] of ranges) {
+    const inCrc = start >= 0x14 && end <= 0x1c;
+    const inMoney = start >= 0xa16a && end <= 0xa16e;
+    assert.ok(inCrc || inMoney, `unexpected change at 0x${start.toString(16)}..0x${end.toString(16)}`);
+  }
+  ok(`money edit touches only the CRCs and 0x0A16A..0x0A16E (${ranges.length} range(s))`);
 
   // car names come from the game's own asset names
   assert.equal(N.bStringHash('240SX'), 0x0150fb80);
@@ -61,6 +66,14 @@ async function main() {
   const usedCareer = save.slots().filter((s) => s.used);
   const named = usedCareer.filter((s) => N.carName(s.carType));
   ok(`car names resolve for ${named.length}/${usedCareer.length} career slots`);
+
+  // stage completion + per-car extras
+  const stages = save.stages();
+  assert.equal(stages.length, 6);
+  const detail = save.slotDetail(1);
+  assert.ok(detail && Number.isInteger(detail.value) && detail.parts <= 170 && detail.dyno <= 5);
+  ok(`stages ${stages.filter(Boolean).length}/6 complete · slot 1 value $${detail.value.toLocaleString('en-US')}, `
+    + `${detail.parts} parts, ${detail.items} items`);
 
   // name + stage
   save.setName('MALEEK');

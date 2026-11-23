@@ -51,6 +51,16 @@ character), and the table holds the 97 `CARS\<name>` entries this build loads �
 stock cars plus the mod's add-ons. A hash outside that set shows as `unknown`
 rather than a guess.
 
+Click a car for its read-only detail line: what was spent on it (`+0x6BE`), how
+many of the 170 visual-part hashes are set, how many of the 68 installed-item
+bytes, how many of the 9 outrun uniques, how many of the 5 dyno setups, and its
+`CAREER_SLOT_n` handle. None of that is written, ever — only money, driver and
+stage are editable so far.
+
+The `progress` row counts stage completion: each stage record at `0x9962` holds
+`1` at `+0xFC` once that stage is done. Verified against a fresh stage-0 save
+(all zero) and a stage-6 save (all one), so it reports 0/6 through 6/6.
+
 Editing money touches neither the car records (`0x5868-0x8022`) nor the
 fingerprinted range, and the log says so on every edit: `cars untouched ·
 garage still paired`. If a future field ever did reach the cars, that line turns
