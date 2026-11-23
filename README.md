@@ -61,6 +61,31 @@ The `progress` row counts stage completion: each stage record at `0x9962` holds
 `1` at `+0xFC` once that stage is done. Verified against a fresh stage-0 save
 (all zero) and a stage-6 save (all one), so it reports 0/6 through 6/6.
 
+## Tuning (dyno + uniques)
+
+Each car carries five 41-byte dyno setups at `+0x354` — Circuit, Drag, Drift,
+Street X, URL. A setup holds a 9-point ECU curve at `+0x17` and a 9-point turbo
+curve at `+0x20`. `100` (0x64) is neutral; `200` (0xC8) is the highest value the
+game still uses, so `[max]` writes 200 across all 90 curve bytes and `[stock]`
+writes 100. The nine outrun-unique dwords at `+0x2E8` are the "gold" upgrades;
+`[all]` writes 1 to each, `[none]` clears them.
+
+`[save as preset]` stores a car's whole 205-byte tuning block plus its nine
+uniques in this browser (`localStorage`), and every other car gets an
+`apply preset` list — that is how you move a tuned/glitched setup from one car
+(or from another save) onto yours. Presets never leave the machine.
+
+**Car writes and the garage fingerprint.** GARAGE.DAT fingerprints career bytes
+`[36, 39266)`, which covers all five career car records — so any tuning write
+invalidates the pairing. The app notices and rewrites the fingerprint inside
+`GARAGE.DAT` on download, reporting `re-links on download` until it does. The
+`cars untouched` line only appears for money/driver/stage edits; a car edit says
+`car record written` instead.
+
+Garage slots 6–25 live in `GARAGE.DAT` itself and are not tunable from the UI
+yet — they would need no fingerprint work at all, which makes them the easy next
+step.
+
 Editing money touches neither the car records (`0x5868-0x8022`) nor the
 fingerprinted range, and the log says so on every edit: `cars untouched ·
 garage still paired`. If a future field ever did reach the cars, that line turns

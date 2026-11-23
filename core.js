@@ -48,6 +48,15 @@ const NFSU2 = (() => {
   const SLOT_COUNT = 5;
   const STAGE_BASE = 0x9962;
   const STAGE_STRIDE = 0x101;
+  const TUNING_OFF = 0x354;
+  const SETUP_SIZE = 41;
+  const SETUP_COUNT = 5;
+  const ECU_OFF = 0x17;
+  const TURBO_OFF = 0x20;
+  const CURVE_POINTS = 9;
+  const NEUTRAL_BYTE = 100;
+  const MAX_TUNE_BYTE = 200;
+  const SETUP_NAMES = ['Circuit', 'Drag', 'Drift', 'Street X', 'URL'];
   const STAGE_NAMES = [
     'intro / arrival',
     'city core',
@@ -186,6 +195,59 @@ const NFSU2 = (() => {
       }
       return out;
     }
+
+    /* ---------- dyno tuning ----------
+       Five 41-byte setups per car at +0x354 (Circuit, Drag, Drift, Street X,
+       URL). Each holds a 9-point ECU curve at +0x17 and a 9-point turbo curve
+       at +0x20. 100 (0x64) is the neutral point; 200 (0xC8) is the highest
+       value the game still uses - the "maxed dyno" shape. */
+    slotTune(index) {
+      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
+      if (base + SLOT_STRIDE > this.size) return null;
+      const setups = [];
+      for (let s = 0; s < SETUP_COUNT; s++) {
+        const off = base + TUNING_OFF + s * SETUP_SIZE;
+        setups.push({
+          name: SETUP_NAMES[s],
+          ecu: Array.from(this.bytes.subarray(off + ECU_OFF, off + ECU_OFF + CURVE_POINTS)),
+          turbo: Array.from(this.bytes.subarray(off + TURBO_OFF, off + TURBO_OFF + CURVE_POINTS)),
+        });
+      }
+      const uniques = [];
+      for (let i = 0; i < 9; i++) uniques.push(this.view.getUint32(base + 0x2e8 + i * 4, true));
+      return {
+        setups,
+        uniques,
+        block: this.bytes.slice(base + TUNING_OFF, base + TUNING_OFF + SETUP_COUNT * SETUP_SIZE),
+      };
+    }
+
+    /** Writes a 205-byte tuning block (5 setups) into a career slot. */
+    writeTune(index, block) {
+      if (block.length !== SETUP_COUNT * SETUP_SIZE) throw new SaveError('tuning block must be 205 bytes');
+      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
+      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
+      this.bytes.set(block, base + TUNING_OFF);
+    }
+
+    /** Sets all five setups to one curve value (100 neutral, 200 max). */
+    fillTune(index, value) {
+      const block = new Uint8Array(SETUP_COUNT * SETUP_SIZE);
+      block.fill(value);
+      this.writeTune(index, block);
+    }
+
+    setUniques(index, on) {
+      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
+      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
+      for (let i = 0; i < 9; i++) this.view.setUint32(base + 0x2e8 + i * 4, on ? 1 : 0, true);
+    }
+
+    writeUniques(index, values) {
+      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
+      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
+      for (let i = 0; i < 9; i++) this.view.setUint32(base + 0x2e8 + i * 4, values[i] >>> 0, true);
+    }
   }
 
   /* ---------- car names ----------
@@ -275,8 +337,21 @@ const NFSU2 = (() => {
     return h;
   }
 
-  function readGarage(bytes) {
-    if (bytes.length < GARAGE_HEADER + GARAGE_RECORD) return null;
+  /** Fingerprint a career save the way nfsu2-web pairs it with GARAGE.DAT. */
+  function garageFingerprint(careerBytes) {
+    return fnv1a64(careerBytes, 36, 39266);
+  }
+
+  /** Returns a copy of GARAGE.DAT with its pairing fingerprint rewritten. */
+  function writeGarageFingerprint(garageBytes, fingerprint) {
+    const out = garageBytes.slice();
+    const v = new DataView(out.buffer, out.byteOffset, out.byteLength);
+    v.setUint32(8, Number(fingerprint & 0xffffffffn), true);
+    v.setUint32(12, Number((fingerprint >> 32n) & 0xffffffffn), true);
+    return out;
+  }
+
+  function readGarage(bytes) {    if (bytes.length < GARAGE_HEADER + GARAGE_RECORD) return null;
     if (bytes[0] !== 0x4e || bytes[1] !== 0x32 || bytes[2] !== 0x47 || bytes[3] !== 0x41) return null;
     const body = bytes.length - GARAGE_HEADER;
     if (body % GARAGE_RECORD !== 0) return null;
@@ -395,9 +470,12 @@ const NFSU2 = (() => {
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
-  /* Rebuild the archive with one entry replaced.  Untouched entries are sliced
-     straight out of the original file, so a 400 MB backup never lands in RAM. */
-  function buildZip(zip, replacedName, replacedBytes) {
+  /* Rebuild the archive with one or more entries replaced.
+     `replacements` is a Map of entry name -> Uint8Array. Untouched entries are
+     sliced straight out of the original file, so a 400 MB backup never lands
+     in RAM. */
+  function buildZip(zip, replacements) {
+    const map = replacements instanceof Map ? replacements : new Map([[replacements, arguments[2]]]);
     const enc = new TextEncoder();
     const parts = [];
     const central = [];
@@ -411,11 +489,12 @@ const NFSU2 = (() => {
       let usize = e.usize;
       let payload;
 
-      if (e.name === replacedName) {
+      if (map.has(e.name)) {
+        const bytes = map.get(e.name);
         method = 0;
-        crc = zipCrc32(replacedBytes);
-        csize = usize = replacedBytes.length;
-        payload = new Blob([replacedBytes]);
+        crc = zipCrc32(bytes);
+        csize = usize = bytes.length;
+        payload = new Blob([bytes]);
       } else {
         payload = zip.file.slice(e.dataOffset, e.dataOffset + e.csize);
       }
@@ -505,10 +584,12 @@ const NFSU2 = (() => {
     SaveError, CareerSave,
     nfsu2Crc, zipCrc32, fnv1a64, readGarage,
     openZip, entryBytes, buildZip, profileEntries,
+    garageFingerprint, writeGarageFingerprint,
     moneyText, parseMoneyInput, changedRanges, hex, crcText,
     bStringHash, carName, carLabel, CAR_NAMES,
     MAGIC, PROFILE_SIZE, MAX_MONEY, NAME_MAX, STAGE_NAMES,
     GARAGE_FIRST_SLOT, GARAGE_RECORD,
+    SETUP_NAMES, SETUP_SIZE, SETUP_COUNT, NEUTRAL_BYTE, MAX_TUNE_BYTE,
   };
 })();
 

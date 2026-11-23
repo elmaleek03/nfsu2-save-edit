@@ -22,11 +22,22 @@ const state = {
   zip: null,
   entry: null,
   garage: null,
+  garageBytes: null,     // raw GARAGE.DAT, needed to re-link the fingerprint
+  garageEntry: null,
   original: null,  // untouched profile bytes
   save: null,      // working copy
   showEmpty: false, // reveal empty car slots in the report
   detailSlot: null, // slot number whose per-car detail is open
+  tunes: {},        // named tuning presets kept in this browser
 };
+
+const TUNES_KEY = 'nfsu2save.tunes';
+
+try {
+  state.tunes = JSON.parse(localStorage.getItem(TUNES_KEY) || '{}') || {};
+} catch {
+  state.tunes = {};
+}
 
 const el = {
   log: document.getElementById('log'),
@@ -110,12 +121,15 @@ async function loadZip(file) {
   const folder = pick.name.slice(0, pick.name.lastIndexOf('/'));
   const garageEntry = zip.entries.find((e) => e.name === `${folder}/GARAGE.DAT`);
   let garage = null;
+  let garageBytes = null;
   if (garageEntry) {
     try {
-      garage = N.readGarage(await N.entryBytes(zip, garageEntry));
-      if (garage) garage.paired = garage.fingerprint === N.fnv1a64(bytes, 36, 39266);
+      garageBytes = await N.entryBytes(zip, garageEntry);
+      garage = N.readGarage(garageBytes);
+      if (garage) garage.paired = garage.fingerprint === N.garageFingerprint(bytes);
     } catch (err) {
       garage = { error: err.message };
+      garageBytes = null;
     }
   }
 
@@ -125,6 +139,8 @@ async function loadZip(file) {
   state.zip = zip;
   state.entry = pick;
   state.garage = garage;
+  state.garageBytes = garageBytes;
+  state.garageEntry = garageEntry ? garageEntry.name : null;
   state.original = bytes.slice();
   state.save = save;
 
@@ -263,6 +279,90 @@ function groupRow(label) {
   return tr;
 }
 
+/* Dyno curves (5 setups x 9-point ECU/turbo), the 9 unique upgrades, and the
+   buttons that write them. Everything here is a car-record edit. */
+function tuneRow(slot) {
+  const tune = state.save ? state.save.slotTune(slot.index) : null;
+  if (!tune) return null;
+
+  const ecu = tune.setups.flatMap((s) => s.ecu);
+  const turbo = tune.setups.flatMap((s) => s.turbo);
+  const uniques = tune.uniques.filter(Boolean).length;
+  const tuned = ecu.some((v) => v !== N.NEUTRAL_BYTE) || turbo.some((v) => v !== N.NEUTRAL_BYTE);
+
+  const tr = document.createElement('tr');
+  tr.className = 'cardetail';
+  tr.dataset.slot = String(slot.index);
+  const td = document.createElement('td');
+  td.colSpan = 5;
+
+  const line = (...nodes) => {
+    const div = document.createElement('div');
+    div.className = 'cardetail__line';
+    div.append(...nodes);
+    return div;
+  };
+  const label = (text) => {
+    const s = document.createElement('span');
+    s.className = 'k';
+    s.textContent = text;
+    return s;
+  };
+  const value = (text, cls = 'v') => {
+    const s = document.createElement('span');
+    s.className = cls;
+    s.textContent = text;
+    return s;
+  };
+  const button = (act, text) => {
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.dataset.act = act;
+    b.dataset.slot = String(slot.index);
+    b.textContent = text;
+    return b;
+  };
+
+  td.append(line(
+    label('dyno'),
+    value(`ecu ${Math.min(...ecu)}-${Math.max(...ecu)} · turbo ${Math.min(...turbo)}-${Math.max(...turbo)}`
+      + (tuned ? '' : ' · stock')),
+    ' ',
+    button('tune-max', 'max'),
+    button('tune-stock', 'stock'),
+    button('tune-save', 'save as preset'),
+  ));
+
+  const select = document.createElement('select');
+  select.className = 'pick';
+  select.dataset.act = 'tune-apply';
+  select.dataset.slot = String(slot.index);
+  const names = Object.keys(state.tunes);
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = names.length ? 'apply preset…' : 'no presets yet';
+  select.appendChild(none);
+  for (const name of names) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  }
+  select.disabled = names.length === 0;
+
+  td.append(line(
+    label('gold'),
+    value(`uniques ${uniques}/9`),
+    ' ',
+    button('uniques-on', 'all'),
+    button('uniques-off', 'none'),
+    select,
+  ));
+
+  tr.appendChild(td);
+  return tr;
+}
+
 function toggleRow(label, expandable) {
   const tr = document.createElement('tr');
   tr.className = 'rowtoggle';
@@ -332,8 +432,9 @@ function renderReport() {
 
   if (garage && garage.version) {
     const shape = `${garage.count} × ${garage.recordLength} B`;
-    rows.push(kvRow('garage', `v${garage.version} · ${shape} · ${garage.paired ? 'paired' : 'stale fingerprint'}`,
-      garage.paired ? '' : 'v--warn'));
+    const paired = garage.fingerprint === N.garageFingerprint(save.bytes);
+    const pairing = paired ? 'paired' : (state.garageBytes ? 're-links on download' : 'stale fingerprint');
+    rows.push(kvRow('garage', `v${garage.version} · ${shape} · ${pairing}`, paired ? '' : 'v--warn'));
   } else if (garage && garage.error) {
     rows.push(kvRow('garage', `unusable: ${garage.error}`, 'v--warn'));
   } else {
@@ -357,6 +458,8 @@ function renderReport() {
       if (state.detailSlot === slot.index) {
         const detail = detailRow(slot);
         if (detail) body.push(detail);
+        const tune = tuneRow(slot);
+        if (tune) body.push(tune);
       }
     }
     if (!empty.length) return;
@@ -427,13 +530,15 @@ function resetState() {
   state.zip = null;
   state.entry = null;
   state.garage = null;
+  state.garageBytes = null;
+  state.garageEntry = null;
   state.original = null;
   state.save = null;
   state.showEmpty = false;
   state.detailSlot = null;
 }
 
-function commit(label, apply) {
+function commit(label, apply, opts = {}) {
   const save = state.save;
   if (!save) return false;
   try {
@@ -446,16 +551,23 @@ function commit(label, apply) {
 
     const carsIntact = sameRegion(state.original, save.bytes, CAR_RECORDS);
     const fpIntact = state.garage && state.garage.fingerprint !== undefined
-      ? N.fnv1a64(save.bytes, FINGERPRINT_RANGE[0], FINGERPRINT_RANGE[1]) === state.garage.fingerprint
+      ? N.garageFingerprint(save.bytes) === state.garage.fingerprint
       : null;
 
     say(`$ ${label}`, 'cmd');
     say(`  ok · ${N.crcText(c)}`, 'ok');
-    say(
-      `  ${carsIntact ? 'cars untouched' : 'CARS CHANGED'} · 0x5868..0x8022`
-      + (fpIntact === null ? '' : ` · garage ${fpIntact ? 'still paired' : 'FINGERPRINT BROKEN'}`),
-      carsIntact && fpIntact !== false ? 'dim' : 'err',
-    );
+    if (opts.car) {
+      const relink = state.garageBytes ? ' · garage fingerprint re-links on download' : '';
+      say(`  car record written${relink}`, 'dim');
+    } else if (carsIntact) {
+      say(
+        `  cars untouched · 0x5868..0x8022`
+        + (fpIntact === null ? '' : ` · garage ${fpIntact ? 'still paired' : 'FINGERPRINT CHANGED'}`),
+        'dim',
+      );
+    } else {
+      say('  CARS CHANGED unexpectedly - do not download this file', 'err');
+    }
     if (total) say(`  ${total} B differ from the file you loaded`, 'dim');
     renderReport();
     updateStatus();
@@ -466,17 +578,91 @@ function commit(label, apply) {
   }
 }
 
+/* ---------- tuning actions ---------- */
+function bytesToHex(bytes) {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+function hexToBytes(hex) {
+  const out = new Uint8Array(hex.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+
+function handleTuneAct(act, slotIndex) {
+  if (!state.save || !slotIndex) return;
+  if (act === 'tune-max') {
+    commit(`dyno max · slot ${slotIndex}`, (s) => s.fillTune(slotIndex, N.MAX_TUNE_BYTE), { car: true });
+  } else if (act === 'tune-stock') {
+    commit(`dyno stock · slot ${slotIndex}`, (s) => s.fillTune(slotIndex, N.NEUTRAL_BYTE), { car: true });
+  } else if (act === 'uniques-on') {
+    commit(`uniques all · slot ${slotIndex}`, (s) => s.setUniques(slotIndex, true), { car: true });
+  } else if (act === 'uniques-off') {
+    commit(`uniques none · slot ${slotIndex}`, (s) => s.setUniques(slotIndex, false), { car: true });
+  } else if (act === 'tune-save') {
+    saveTunePreset(slotIndex);
+  }
+}
+
+function saveTunePreset(slotIndex) {
+  const tune = state.save ? state.save.slotTune(slotIndex) : null;
+  const slot = state.save ? state.save.slots().find((s) => s.index === slotIndex) : null;
+  if (!tune || !slot) return;
+  const name = `${N.carLabel(slot.carType) || 'car'} · slot ${slotIndex}`;
+  state.tunes[name] = {
+    tune: bytesToHex(tune.block),
+    uniques: tune.uniques.slice(),
+  };
+  try {
+    localStorage.setItem(TUNES_KEY, JSON.stringify(state.tunes));
+  } catch (err) {
+    say(`error: could not store the preset (${err.message})`, 'err');
+    return;
+  }
+  say(`$ save tune "${name}"`, 'cmd');
+  say('  kept in this browser · pick it from any car\'s apply preset list', 'dim');
+  renderReport();
+}
+
+function applyTunePreset(name, slotIndex) {
+  const preset = state.tunes[name];
+  if (!preset) return;
+  const block = hexToBytes(preset.tune);
+  if (block.length !== N.SETUP_COUNT * N.SETUP_SIZE) {
+    say(`error: preset "${name}" is damaged`, 'err');
+    return;
+  }
+  commit(`apply tune "${name}" · slot ${slotIndex}`, (s) => {
+    s.writeTune(slotIndex, block);
+    s.writeUniques(slotIndex, preset.uniques);
+  }, { car: true });
+}
+
 /* ---------- download ---------- */
 function download() {
   const save = state.save;
   if (!save) return;
   try {
     if (state.kind === 'zip') {
-      const blob = N.buildZip(state.zip, state.entry.name, save.bytes);
+      const replacements = new Map([[state.entry.name, save.bytes]]);
+      let relinked = false;
+      if (state.garageBytes && state.garageEntry && state.garage && state.garage.fingerprint !== undefined) {
+        const fingerprint = N.garageFingerprint(save.bytes);
+        if (fingerprint !== state.garage.fingerprint) {
+          replacements.set(state.garageEntry, N.writeGarageFingerprint(state.garageBytes, fingerprint));
+          state.garage.fingerprint = fingerprint;
+          state.garageBytes = replacements.get(state.garageEntry);
+          relinked = true;
+        }
+      }
+      const blob = N.buildZip(state.zip, replacements);
       const name = state.file.name.replace(/\.zip$/i, '') + '-edited.zip';
       saveAs(blob, name);
       say(`$ download ${name}`, 'cmd');
       say('  every other entry is copied through untouched', 'dim');
+      if (relinked) say('  GARAGE.DAT fingerprint re-linked to the edited profile', 'ok');
     } else {
       const name = state.file.name + '-edited';
       saveAs(new Blob([save.bytes], { type: 'application/octet-stream' }), name);
@@ -578,6 +764,11 @@ el.stage.addEventListener('input', () => el.stage.classList.add('is-dirty'));
 el.download.addEventListener('click', download);
 
 el.carsBody.addEventListener('click', (e) => {
+  const act = e.target.closest('button[data-act]');
+  if (act) {
+    handleTuneAct(act.dataset.act, Number(act.dataset.slot));
+    return;
+  }
   const car = e.target.closest('tr.carrow');
   if (car) {
     const index = Number(car.dataset.slot);
@@ -589,6 +780,12 @@ el.carsBody.addEventListener('click', (e) => {
     state.showEmpty = !state.showEmpty;
     renderReport();
   }
+});
+
+el.carsBody.addEventListener('change', (e) => {
+  const sel = e.target.closest('select[data-act="tune-apply"]');
+  if (!sel || !sel.value) return;
+  applyTunePreset(sel.value, Number(sel.dataset.slot));
 });
 
 el.revert.addEventListener('click', () => {

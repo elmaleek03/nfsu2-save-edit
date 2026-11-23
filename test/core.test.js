@@ -75,6 +75,21 @@ async function main() {
   ok(`stages ${stages.filter(Boolean).length}/6 complete · slot 1 value $${detail.value.toLocaleString('en-US')}, `
     + `${detail.parts} parts, ${detail.items} items`);
 
+  // tuning lives in the car record: writing it must move the garage fingerprint
+  const scratch = new N.CareerSave(bytes.slice());
+  const tune0 = scratch.slotTune(1);
+  assert.equal(tune0.setups.length, N.SETUP_COUNT);
+  assert.equal(tune0.block.length, N.SETUP_COUNT * N.SETUP_SIZE);
+  scratch.fillTune(1, N.MAX_TUNE_BYTE);
+  scratch.setUniques(1, true);
+  scratch.fixChecksums();
+  const tuned = scratch.slotTune(1);
+  assert.ok(tuned.setups.every((s) => s.ecu.every((v) => v === N.MAX_TUNE_BYTE)
+    && s.turbo.every((v) => v === N.MAX_TUNE_BYTE)));
+  assert.equal(tuned.uniques.filter(Boolean).length, 9);
+  assert.ok(Object.values(scratch.checksums()).every(Boolean));
+  ok('dyno max + nine uniques write cleanly into slot 1');
+
   // name + stage
   save.setName('MALEEK');
   save.setStage(4);
@@ -85,7 +100,7 @@ async function main() {
   ok('rename and stage edit still pass the checksums');
 
   // rebuild the archive
-  const blob = N.buildZip(zip, entry.name, save.bytes);
+  const blob = N.buildZip(zip, new Map([[entry.name, save.bytes]]));
   const out = path.join(outDir, 'edited.zip');
   fs.writeFileSync(out, Buffer.from(await blob.arrayBuffer()));
   ok(`rebuilt archive (${blob.size} bytes) -> ${out}`);
@@ -135,6 +150,15 @@ async function main() {
       'GARAGE.DAT changed during a money edit',
     );
     ok('GARAGE.DAT is byte-identical after the edit');
+
+    // a car edit does move the fingerprint, so the re-link has to work
+    const fpTuned = N.garageFingerprint(scratch.bytes);
+    assert.notEqual(fpTuned, garage.fingerprint, 'car edit should change the fingerprint');
+    const relinked = N.writeGarageFingerprint(await N.entryBytes(zip, garageEntry), fpTuned);
+    const gv = new DataView(relinked.buffer, relinked.byteOffset, relinked.byteLength);
+    assert.equal(gv.getUint32(8, true), Number(fpTuned & 0xffffffffn));
+    assert.equal(gv.getUint32(12, true), Number((fpTuned >> 32n) & 0xffffffffn));
+    ok('garage fingerprint re-link rewrites both halves');
   }
 
   // bare profile path
