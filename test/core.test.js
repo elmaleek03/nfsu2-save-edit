@@ -184,6 +184,29 @@ async function main() {
     assert.equal(gv.getUint32(8, true), Number(fpTuned & 0xffffffffn));
     assert.equal(gv.getUint32(12, true), Number((fpTuned >> 32n) & 0xffffffffn));
     ok('garage fingerprint re-link rewrites both halves');
+
+    // garage slots 6-25 tune through the same helpers, at their own base
+    const gBytes = await N.entryBytes(zip, garageEntry);
+    const gBase = N.garageBase(N.GARAGE_FIRST_SLOT);
+    const gTune = N.readTuneAt(gBytes, gBase);
+    assert.equal(gTune.setups.length, N.SETUP_COUNT);
+    const gCopy = gBytes.slice();
+    N.fillCurvesAt(gCopy, gBase, N.MAX_TUNE_BYTE);
+    N.setUniquesAt(gCopy, gBase, true);
+    const gAfter = N.readTuneAt(gCopy, gBase);
+    assert.ok(gAfter.setups.every((s) => s.ecu.every((v) => v === N.MAX_TUNE_BYTE)));
+    assert.equal(gAfter.uniques.filter(Boolean).length, 9);
+    let outside = 0;
+    const recStart = N.GARAGE_RECORD ? 32 + (N.GARAGE_FIRST_SLOT - N.GARAGE_FIRST_SLOT) * 2034 : 32;
+    for (let i = 0; i < gCopy.length; i++) {
+      if (gCopy[i] === gBytes[i]) continue;
+      const rel = i - gBase;
+      const inCurve = rel >= 0x354 && rel < 0x354 + 5 * 41;
+      const inUniques = rel >= 0x2e8 && rel < 0x2e8 + 36;
+      if (!inCurve && !inUniques) outside += 1;
+    }
+    assert.equal(outside, 0, 'garage tuning touched bytes outside the curves/uniques');
+    ok(`garage slot ${N.GARAGE_FIRST_SLOT} tunes through the shared helpers`);
   }
 
   // a rename has to carry the zip entries with it, or the site keeps the old profile

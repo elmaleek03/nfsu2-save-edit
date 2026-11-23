@@ -23,6 +23,7 @@ const state = {
   entry: null,
   garage: null,
   garageBytes: null,     // raw GARAGE.DAT, needed to re-link the fingerprint
+  garageOriginal: null,  // its bytes at load, to spot garage edits
   garageEntry: null,
   original: null,  // untouched profile bytes
   save: null,      // working copy
@@ -141,6 +142,7 @@ async function loadZip(file) {
   state.entry = pick;
   state.garage = garage;
   state.garageBytes = garageBytes;
+  state.garageOriginal = garageBytes ? garageBytes.slice() : null;
   state.garageEntry = garageEntry ? garageEntry.name : null;
   state.original = bytes.slice();
   state.save = save;
@@ -251,6 +253,26 @@ function carState(slot) {
   return 'owned';
 }
 
+/* Slots 1-5 live in the career save, 6-25 in GARAGE.DAT. The record shape is the
+   same, so the readers are shared and only the base differs. */
+function isGarageSlot(index) {
+  return index >= N.GARAGE_FIRST_SLOT;
+}
+
+function carTune(index) {
+  if (isGarageSlot(index)) {
+    return state.garageBytes ? N.readTuneAt(state.garageBytes, N.garageBase(index)) : null;
+  }
+  return state.save ? state.save.slotTune(index) : null;
+}
+
+function carDetail(index) {
+  if (isGarageSlot(index)) {
+    return state.garageBytes ? N.readDetailAt(state.garageBytes, N.garageBase(index)) : null;
+  }
+  return state.save ? state.save.slotDetail(index) : null;
+}
+
 function carRow(slot) {
   const status = carState(slot);
   const label = slot.used ? N.carLabel(slot.carType) : null;
@@ -277,7 +299,7 @@ function carRow(slot) {
 }
 
 function detailRow(slot) {
-  const detail = state.save ? state.save.slotDetail(slot.index) : null;
+  const detail = carDetail(slot.index);
   if (!detail) return null;
   const tr = document.createElement('tr');
   tr.className = 'cardetail';
@@ -318,7 +340,7 @@ function groupRow(label) {
 /* Dyno curves (5 setups x 9-point ECU/turbo), the 9 unique upgrades, and the
    buttons that write them. Everything here is a car-record edit. */
 function tuneRow(slot) {
-  const tune = state.save ? state.save.slotTune(slot.index) : null;
+  const tune = carTune(slot.index);
   if (!tune) return null;
 
   const ecu = tune.setups.flatMap((s) => s.ecu);
@@ -558,9 +580,13 @@ function updateStatus() {
 
   const ranges = N.changedRanges(state.original, save.bytes);
   const total = ranges.reduce((n, [s, e]) => n + (e - s), 0);
-  el.pending.textContent = total
-    ? `${total} B changed · ${ranges.map(([s, e]) => `${N.hex(s, 5)}+${e - s}`).join(' ')}`
-    : 'no changes yet';
+  const garageChanged = state.garageBytes && state.garageOriginal
+    ? N.changedRanges(state.garageOriginal, state.garageBytes).reduce((n, [s, e]) => n + (e - s), 0)
+    : 0;
+  const bits = [];
+  if (total) bits.push(`${total} B in the save · ${ranges.map(([s, e]) => `${N.hex(s, 5)}+${e - s}`).join(' ')}`);
+  if (garageChanged) bits.push(`${garageChanged} B in GARAGE.DAT`);
+  el.pending.textContent = bits.length ? bits.join(' · ') : 'no changes yet';
 }
 
 function resetState() {
@@ -570,6 +596,7 @@ function resetState() {
   state.entry = null;
   state.garage = null;
   state.garageBytes = null;
+  state.garageOriginal = null;
   state.garageEntry = null;
   state.original = null;
   state.save = null;
@@ -630,27 +657,74 @@ function hexToBytes(hex) {
   return out;
 }
 
+/* Garage records live in GARAGE.DAT, which has no checksums of its own. The
+   career fingerprint hashes only the career save, so a garage write needs no
+   re-link - it just has to travel in the rebuilt archive. */
+function commitGarage(label, mutate) {
+  if (!state.garageBytes || !state.garageEntry) {
+    say('error: this save has no GARAGE.DAT', 'err');
+    return false;
+  }
+  try {
+    const bytes = state.garageBytes.slice();
+    mutate(bytes);
+    state.garageBytes = bytes;
+    say(`$ ${label}`, 'cmd');
+    say('  ok · GARAGE.DAT written (that file carries no checksums)', 'ok');
+    if (state.garageOriginal) {
+      const changed = N.changedRanges(state.garageOriginal, bytes).reduce((n, [s, e]) => n + (e - s), 0);
+      if (changed) say(`  ${changed} B differ in GARAGE.DAT`, 'dim');
+    }
+    renderReport();
+    updateStatus();
+    return true;
+  } catch (err) {
+    say(`error: ${err.message}`, 'err');
+    return false;
+  }
+}
+
 function handleTuneAct(act, slotIndex) {
   if (!state.save || !slotIndex) return;
-  if (act === 'tune-max') {
-    commit(`dyno max (ecu + turbo) · slot ${slotIndex}`, (s) => s.fillCurves(slotIndex, N.MAX_TUNE_BYTE), { car: true });
-  } else if (act === 'tune-ramp') {
-    commit(`dyno ramp (neutral -> max at high rpm) · slot ${slotIndex}`, (s) => s.fillCurveRamp(slotIndex), { car: true });
-  } else if (act === 'tune-stock') {
-    commit(`dyno neutral (ecu + turbo) · slot ${slotIndex}`, (s) => s.fillCurves(slotIndex, N.NEUTRAL_BYTE), { car: true });
-  } else if (act === 'uniques-on') {
-    commit(`uniques all · slot ${slotIndex}`, (s) => s.setUniques(slotIndex, true), { car: true });
-  } else if (act === 'uniques-off') {
-    commit(`uniques none · slot ${slotIndex}`, (s) => s.setUniques(slotIndex, false), { car: true });
-  } else if (act === 'tune-save') {
+  if (act === 'tune-save') {
     saveTunePreset(slotIndex);
+    return;
+  }
+  const garage = isGarageSlot(slotIndex);
+  const base = garage ? N.garageBase(slotIndex) : 0;
+
+  if (act === 'tune-max') {
+    const label = `dyno max (ecu + turbo) · slot ${slotIndex}`;
+    if (garage) commitGarage(label, (b) => N.fillCurvesAt(b, base, N.MAX_TUNE_BYTE));
+    else commit(label, (s) => s.fillCurves(slotIndex, N.MAX_TUNE_BYTE), { car: true });
+  } else if (act === 'tune-ramp') {
+    const label = `dyno ramp (neutral -> max at high rpm) · slot ${slotIndex}`;
+    if (garage) commitGarage(label, (b) => N.fillRampAt(b, base));
+    else commit(label, (s) => s.fillCurveRamp(slotIndex), { car: true });
+  } else if (act === 'tune-stock') {
+    const label = `dyno neutral (ecu + turbo) · slot ${slotIndex}`;
+    if (garage) commitGarage(label, (b) => N.fillCurvesAt(b, base, N.NEUTRAL_BYTE));
+    else commit(label, (s) => s.fillCurves(slotIndex, N.NEUTRAL_BYTE), { car: true });
+  } else if (act === 'uniques-on') {
+    const label = `uniques all · slot ${slotIndex}`;
+    if (garage) commitGarage(label, (b) => N.setUniquesAt(b, base, true));
+    else commit(label, (s) => s.setUniques(slotIndex, true), { car: true });
+  } else if (act === 'uniques-off') {
+    const label = `uniques none · slot ${slotIndex}`;
+    if (garage) commitGarage(label, (b) => N.setUniquesAt(b, base, false));
+    else commit(label, (s) => s.setUniques(slotIndex, false), { car: true });
   }
 }
 
 function saveTunePreset(slotIndex) {
-  const tune = state.save ? state.save.slotTune(slotIndex) : null;
-  const slot = state.save ? state.save.slots().find((s) => s.index === slotIndex) : null;
-  if (!tune || !slot) return;
+  const tune = carTune(slotIndex);
+  if (!tune) return;
+  const slots = [
+    ...(state.save ? state.save.slots() : []),
+    ...(state.garage && state.garage.slots ? state.garage.slots : []),
+  ];
+  const slot = slots.find((s) => s.index === slotIndex);
+  if (!slot) return;
   const name = `${N.carLabel(slot.carType) || 'car'} · slot ${slotIndex}`;
   state.tunes[name] = {
     tune: bytesToHex(tune.block),
@@ -675,10 +749,19 @@ function applyTunePreset(name, slotIndex) {
     say(`error: preset "${name}" is damaged`, 'err');
     return;
   }
-  commit(`apply tune "${name}" · slot ${slotIndex}`, (s) => {
-    s.writeTune(slotIndex, block);
-    s.writeUniques(slotIndex, preset.uniques);
-  }, { car: true });
+  const label = `apply tune "${name}" · slot ${slotIndex}`;
+  if (isGarageSlot(slotIndex)) {
+    const base = N.garageBase(slotIndex);
+    commitGarage(label, (b) => {
+      N.writeTuneAt(b, base, block);
+      N.writeUniquesAt(b, base, preset.uniques);
+    });
+  } else {
+    commit(label, (s) => {
+      s.writeTune(slotIndex, block);
+      s.writeUniques(slotIndex, preset.uniques);
+    }, { car: true });
+  }
 }
 
 /* ---------- download ---------- */
@@ -689,14 +772,23 @@ async function download() {
     if (state.kind === 'zip') {
       const replacements = new Map([[state.entry.name, save.bytes]]);
       let relinked = false;
-      if (state.garageBytes && state.garageEntry && state.garage && state.garage.fingerprint !== undefined) {
+      let garageDirty = false;
+      let garageBytes = state.garageBytes;
+      if (garageBytes && state.garageOriginal) {
+        garageDirty = N.changedRanges(state.garageOriginal, garageBytes).length > 0;
+      }
+      if (garageBytes && state.garageEntry && state.garage && state.garage.fingerprint !== undefined) {
         const fingerprint = N.garageFingerprint(save.bytes);
         if (fingerprint !== state.garage.fingerprint) {
-          replacements.set(state.garageEntry, N.writeGarageFingerprint(state.garageBytes, fingerprint));
+          garageBytes = N.writeGarageFingerprint(garageBytes, fingerprint);
           state.garage.fingerprint = fingerprint;
-          state.garageBytes = replacements.get(state.garageEntry);
+          garageDirty = true;
           relinked = true;
         }
+      }
+      if (garageDirty && state.garageEntry) {
+        state.garageBytes = garageBytes;
+        replacements.set(state.garageEntry, garageBytes);
       }
       const rename = pendingRename();
       if (rename && state.zip.entries.some((e) => e.name === rename.profile && e.name !== state.entry.name)) {
@@ -749,6 +841,7 @@ async function download() {
       say(`$ download ${name}`, 'cmd');
       say('  every other entry is copied through untouched', 'dim');
       if (relinked) say('  GARAGE.DAT fingerprint re-linked to the edited profile', 'ok');
+      if (garageDirty && !relinked) say('  GARAGE.DAT carried through with its tuning edits', 'ok');
       if (rename) {
         say(`  renamed ${renames.size} entr${renames.size === 1 ? 'y' : 'ies'} -> ${rename.profile}`, 'ok');
         if (companion) say(`  replaced the old name inside ${companion} companion file(s)`, 'ok');

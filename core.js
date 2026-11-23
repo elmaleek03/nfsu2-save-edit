@@ -57,6 +57,110 @@ const NFSU2 = (() => {
   const NEUTRAL_BYTE = 100;
   const MAX_TUNE_BYTE = 200;
   const SETUP_NAMES = ['Circuit', 'Drag', 'Drift', 'Street X', 'URL'];
+
+  /* A car record is the same 2,034-byte shape in both files: the career save
+     holds five at 0x5870, GARAGE.DAT holds one per slot from 32 + n*2034, eight
+     bytes into each record. Everything below works from a payload base, so the
+     dyno and unique code is shared. */
+  const careerBase = (index) => SLOT_BASE + (index - 1) * SLOT_STRIDE;
+  const garageBase = (index) => GARAGE_HEADER + (index - GARAGE_FIRST_SLOT) * GARAGE_RECORD + SLOT_PAYLOAD;
+
+  function viewOf(bytes) {
+    return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
+  function readTuneAt(bytes, base) {
+    if (base + SLOT_STRIDE > bytes.length) return null;
+    const setups = [];
+    for (let s = 0; s < SETUP_COUNT; s++) {
+      const off = base + TUNING_OFF + s * SETUP_SIZE;
+      setups.push({
+        name: SETUP_NAMES[s],
+        ecu: Array.from(bytes.subarray(off + ECU_OFF, off + ECU_OFF + CURVE_POINTS)),
+        turbo: Array.from(bytes.subarray(off + TURBO_OFF, off + TURBO_OFF + CURVE_POINTS)),
+      });
+    }
+    const v = viewOf(bytes);
+    const uniques = [];
+    for (let i = 0; i < 9; i++) uniques.push(v.getUint32(base + 0x2e8 + i * 4, true));
+    return {
+      setups,
+      uniques,
+      block: bytes.slice(base + TUNING_OFF, base + TUNING_OFF + SETUP_COUNT * SETUP_SIZE),
+    };
+  }
+
+  function writeTuneAt(bytes, base, block) {
+    if (block.length !== SETUP_COUNT * SETUP_SIZE) throw new SaveError('tuning block must be 205 bytes');
+    if (base + SLOT_STRIDE > bytes.length) throw new SaveError('car record is outside this file');
+    bytes.set(block, base + TUNING_OFF);
+  }
+
+  /* Only the 18 curve bytes of each setup move; the other 23 are scalars. */
+  function fillCurvesAt(bytes, base, value) {
+    if (base + SLOT_STRIDE > bytes.length) throw new SaveError('car record is outside this file');
+    for (let s = 0; s < SETUP_COUNT; s++) {
+      const off = base + TUNING_OFF + s * SETUP_SIZE;
+      for (let i = CURVE_POINTS - 1; i >= 0; i--) {
+        bytes[off + ECU_OFF + i] = value;
+        bytes[off + TURBO_OFF + i] = value;
+      }
+    }
+  }
+
+  function fillRampAt(bytes, base) {
+    if (base + SLOT_STRIDE > bytes.length) throw new SaveError('car record is outside this file');
+    const step = (MAX_TUNE_BYTE - NEUTRAL_BYTE) / (CURVE_POINTS - 1);
+    for (let s = 0; s < SETUP_COUNT; s++) {
+      const off = base + TUNING_OFF + s * SETUP_SIZE;
+      for (let i = 0; i < CURVE_POINTS; i++) {
+        const v = Math.round(NEUTRAL_BYTE + step * i);
+        bytes[off + ECU_OFF + i] = v;
+        bytes[off + TURBO_OFF + i] = v;
+      }
+    }
+  }
+
+  function setUniquesAt(bytes, base, on) {
+    if (base + SLOT_STRIDE > bytes.length) throw new SaveError('car record is outside this file');
+    const v = viewOf(bytes);
+    for (let i = 0; i < 9; i++) v.setUint32(base + 0x2e8 + i * 4, on ? 1 : 0, true);
+  }
+
+  function writeUniquesAt(bytes, base, values) {
+    if (base + SLOT_STRIDE > bytes.length) throw new SaveError('car record is outside this file');
+    const v = viewOf(bytes);
+    for (let i = 0; i < 9; i++) v.setUint32(base + 0x2e8 + i * 4, values[i] >>> 0, true);
+  }
+
+  function readDetailAt(bytes, base) {
+    if (base + SLOT_STRIDE > bytes.length) return null;
+    const v = viewOf(bytes);
+    let parts = 0;
+    for (let i = 0; i < 170; i++) if (v.getUint32(base + 0x18 + i * 4, true) !== 0) parts += 1;
+    let items = 0;
+    for (let i = 0; i < 68; i++) if (bytes[base + 0x310 + i] !== 0) items += 1;
+    let uniques = 0;
+    for (let i = 0; i < 9; i++) if (v.getUint32(base + 0x2e8 + i * 4, true) !== 0) uniques += 1;
+    let dyno = 0;
+    for (let i = 0; i < 5; i++) {
+      const start = base + 0x354 + i * 41;
+      for (let j = 0; j < 41; j++) {
+        if (bytes[start + j] !== 0) {
+          dyno += 1;
+          break;
+        }
+      }
+    }
+    return {
+      value: v.getUint32(base + 0x6be, true),
+      parts,
+      items,
+      uniques,
+      dyno,
+      handle: v.getUint32(base - 4, true),
+    };
+  }
   const STAGE_NAMES = [
     'intro / arrival',
     'city core',
@@ -163,33 +267,7 @@ const NFSU2 = (() => {
     /* Per-slot numbers that are read-only for now: what was spent on the car,
        how much of it is non-default, and its CAREER_SLOT handle. */
     slotDetail(index) {
-      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
-      if (base + SLOT_STRIDE > this.size) return null;
-      const v = this.view;
-      let parts = 0;
-      for (let i = 0; i < 170; i++) if (v.getUint32(base + 0x18 + i * 4, true) !== 0) parts += 1;
-      let items = 0;
-      for (let i = 0; i < 68; i++) if (this.bytes[base + 0x310 + i] !== 0) items += 1;
-      let uniques = 0;
-      for (let i = 0; i < 9; i++) if (v.getUint32(base + 0x2e8 + i * 4, true) !== 0) uniques += 1;
-      let dyno = 0;
-      for (let i = 0; i < 5; i++) {
-        const start = base + 0x354 + i * 41;
-        for (let j = 0; j < 41; j++) {
-          if (this.bytes[start + j] !== 0) {
-            dyno += 1;
-            break;
-          }
-        }
-      }
-      return {
-        value: v.getUint32(base + 0x6be, true),
-        parts,
-        items,
-        uniques,
-        dyno,
-        handle: v.getUint32(base - 4, true),
-      };
+      return readDetailAt(this.bytes, careerBase(index));
     }
 
     /* Stage completion: eight 0x101-byte records at 0x9962, stage i's record
@@ -205,81 +283,29 @@ const NFSU2 = (() => {
       return out;
     }
 
-    /* ---------- dyno tuning ----------
-       Five 41-byte setups per car at +0x354 (Circuit, Drag, Drift, Street X,
-       URL). Each holds a 9-point ECU curve at +0x17 and a 9-point turbo curve
-       at +0x20. 100 (0x64) is the neutral point; 200 (0xC8) is the highest
-       value the game still uses - the "maxed dyno" shape. */
+    /* Dyno and uniques, shared with the garage records through the base helpers. */
     slotTune(index) {
-      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
-      if (base + SLOT_STRIDE > this.size) return null;
-      const setups = [];
-      for (let s = 0; s < SETUP_COUNT; s++) {
-        const off = base + TUNING_OFF + s * SETUP_SIZE;
-        setups.push({
-          name: SETUP_NAMES[s],
-          ecu: Array.from(this.bytes.subarray(off + ECU_OFF, off + ECU_OFF + CURVE_POINTS)),
-          turbo: Array.from(this.bytes.subarray(off + TURBO_OFF, off + TURBO_OFF + CURVE_POINTS)),
-        });
-      }
-      const uniques = [];
-      for (let i = 0; i < 9; i++) uniques.push(this.view.getUint32(base + 0x2e8 + i * 4, true));
-      return {
-        setups,
-        uniques,
-        block: this.bytes.slice(base + TUNING_OFF, base + TUNING_OFF + SETUP_COUNT * SETUP_SIZE),
-      };
+      return readTuneAt(this.bytes, careerBase(index));
     }
 
-    /* A rising curve: neutral at the lowest RPM, max at the highest. */
-    fillCurveRamp(index) {
-      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
-      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
-      const step = (MAX_TUNE_BYTE - NEUTRAL_BYTE) / (CURVE_POINTS - 1);
-      for (let s = 0; s < SETUP_COUNT; s++) {
-        const off = base + TUNING_OFF + s * SETUP_SIZE;
-        for (let i = 0; i < CURVE_POINTS; i++) {
-          const v = Math.round(NEUTRAL_BYTE + step * i);
-          this.bytes[off + ECU_OFF + i] = v;
-          this.bytes[off + TURBO_OFF + i] = v;
-        }
-      }
-    }
-
-    /** Writes a 205-byte tuning block (5 setups) into a career slot. */
     writeTune(index, block) {
-      if (block.length !== SETUP_COUNT * SETUP_SIZE) throw new SaveError('tuning block must be 205 bytes');
-      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
-      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
-      this.bytes.set(block, base + TUNING_OFF);
+      writeTuneAt(this.bytes, careerBase(index), block);
     }
 
-    /* Writes one value into the nine ECU and nine turbo curve points of every
-       setup and nothing else - the other 23 bytes of each 41-byte setup are
-       separate scalars and stay as they are. Points are written from the
-       highest-RPM end backwards, so the top of the curve is set first. */
     fillCurves(index, value) {
-      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
-      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
-      for (let s = 0; s < SETUP_COUNT; s++) {
-        const off = base + TUNING_OFF + s * SETUP_SIZE;
-        for (let i = CURVE_POINTS - 1; i >= 0; i--) {
-          this.bytes[off + ECU_OFF + i] = value;
-          this.bytes[off + TURBO_OFF + i] = value;
-        }
-      }
+      fillCurvesAt(this.bytes, careerBase(index), value);
+    }
+
+    fillCurveRamp(index) {
+      fillRampAt(this.bytes, careerBase(index));
     }
 
     setUniques(index, on) {
-      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
-      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
-      for (let i = 0; i < 9; i++) this.view.setUint32(base + 0x2e8 + i * 4, on ? 1 : 0, true);
+      setUniquesAt(this.bytes, careerBase(index), on);
     }
 
     writeUniques(index, values) {
-      const base = SLOT_BASE + (index - 1) * SLOT_STRIDE;
-      if (base + SLOT_STRIDE > this.size) throw new SaveError(`slot ${index} is outside this save`);
-      for (let i = 0; i < 9; i++) this.view.setUint32(base + 0x2e8 + i * 4, values[i] >>> 0, true);
+      writeUniquesAt(this.bytes, careerBase(index), values);
     }
   }
 
@@ -711,6 +737,8 @@ const NFSU2 = (() => {
     MAGIC, PROFILE_SIZE, MAX_MONEY, NAME_MAX, STAGE_NAMES,
     GARAGE_FIRST_SLOT, GARAGE_RECORD,
     SETUP_NAMES, SETUP_SIZE, SETUP_COUNT, NEUTRAL_BYTE, MAX_TUNE_BYTE,
+    careerBase, garageBase, readTuneAt, writeTuneAt, fillCurvesAt, fillRampAt,
+    setUniquesAt, writeUniquesAt, readDetailAt,
   };
 })();
 

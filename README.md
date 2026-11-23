@@ -115,9 +115,13 @@ patched as whole words, `gamefile.bin` only where the field is NUL-terminated, a
 the download refuses a name another profile in the archive already owns. Names may
 not contain `\ / : * ? " < > |` or control characters.
 
-Garage slots 6–25 live in `GARAGE.DAT` itself and are not tunable from the UI
-yet — they would need no fingerprint work at all, which makes them the easy next
-step.
+**Garage slots 6–25** tune the same way — click a garage car and the same
+`tune`/`gold` rows appear. Those records live in `GARAGE.DAT` itself, at
+`32 + n*2034` with the payload 8 bytes in, so the writes need no fingerprint
+work: the career save is left byte-identical and the rebuilt archive simply
+carries the edited `GARAGE.DAT` (logged as `GARAGE.DAT written`, then
+`N B differ in GARAGE.DAT`).
+
 
 Editing money touches neither the car records (`0x5868-0x8022`) nor the
 fingerprinted range, and the log says so on every edit: `cars untouched ·
