@@ -224,6 +224,11 @@ async function main() {
   assert.equal(Buffer.from(bin).toString('latin1'), '2857.RUSDI\u0000\u0000\u0000');
   ok('name lands in the aux spans and companion text/binary files');
 
+  const roam = N.clearRoamOverrides(Buffer.from('sound = on\nroam_block = R9-Vosquue\nroam_friends = dproject\nhorn = klaxon\n', 'latin1'));
+  assert.deepEqual(roam.removed, ['roam_block', 'roam_friends']);
+  assert.equal(Buffer.from(roam.bytes).toString('latin1'), 'sound = on\nhorn = klaxon\n');
+  ok('roam overrides are dropped from settings.ini');
+
   // bare profile path
   const rawBytes = new Uint8Array(fs.readFileSync(rawPath));  const rawSave = new N.CareerSave(rawBytes);
   assert.ok(rawSave.checksums().a);

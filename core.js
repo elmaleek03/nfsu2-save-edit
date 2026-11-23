@@ -370,6 +370,31 @@ const NFSU2 = (() => {
     return h;
   }
 
+  /* ---------- roam overrides in settings.ini ----------
+     The site reads keys like roam_block as NFSU2_ROAM_BLOCK. Values copied from
+     another session (a block, a car count, a friend name) can follow you into a
+     profile, so the editor can drop those lines and let the defaults apply. */
+  const ROAM_KEYS = ['roam_block', 'roam_max_cars', 'roam_collide', 'roam_friends'];
+
+  /** Removes the roam override lines; returns { bytes, removed } or null. */
+  function clearRoamOverrides(bytes) {
+    const text = latin1Text(bytes);
+    const eol = text.includes('\r\n') ? '\r\n' : '\n';
+    const kept = [];
+    const removed = [];
+    for (const line of text.split(/\r?\n/)) {
+      const eq = line.indexOf('=');
+      const key = eq < 0 ? '' : line.slice(0, eq).trim().toLowerCase().replace(/^nfsu2_/, '');
+      if (eq >= 0 && ROAM_KEYS.includes(key)) {
+        removed.push(key);
+      } else {
+        kept.push(line);
+      }
+    }
+    if (!removed.length) return null;
+    return { bytes: latin1Bytes(kept.join(eol)), removed };
+  }
+
   /** Fingerprint a career save the way nfsu2-web pairs it with GARAGE.DAT. */
   function garageFingerprint(careerBytes) {
     return fnv1a64(careerBytes, 36, 39266);
@@ -409,8 +434,7 @@ const NFSU2 = (() => {
 
   /** Replaces occurrences inside zero-padded binary fields, keeping offsets.
       Returns new bytes, or null when nothing matched or a field is too narrow. */
-  function replaceNameInBinary(bytes, from, to) {
-    if (!from || from === to) return null;
+  function replaceNameInBinary(bytes, from, to) {    if (!from || from === to) return null;
     const src = latin1Bytes(from);
     const dst = latin1Bytes(to);
     if (dst.length > src.length) return null;
@@ -681,6 +705,7 @@ const NFSU2 = (() => {
     openZip, entryBytes, buildZip, profileEntries,
     garageFingerprint, writeGarageFingerprint,
     replaceNameInText, replaceNameInBinary,
+    clearRoamOverrides, ROAM_KEYS,
     moneyText, parseMoneyInput, changedRanges, hex, crcText,
     bStringHash, carName, carLabel, CAR_NAMES,
     MAGIC, PROFILE_SIZE, MAX_MONEY, NAME_MAX, STAGE_NAMES,

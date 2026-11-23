@@ -66,6 +66,7 @@ const el = {
   kvBody: document.getElementById('kv-body'),
   carsHead: document.getElementById('cars-head'),
   carsBody: document.getElementById('cars-body'),
+  clearRoam: document.getElementById('clear-roam'),
 };
 
 /* ---------- logging ---------- */
@@ -731,6 +732,17 @@ async function download() {
           }
         }
       }
+      if (el.clearRoam.checked) {
+        const settingsEntry = state.zip.entries.find((e) => /(^|\/)settings\.ini$/i.test(e.name));
+        if (settingsEntry) {
+          const bytes = replacements.get(settingsEntry.name) || await N.entryBytes(state.zip, settingsEntry);
+          const cleared = N.clearRoamOverrides(bytes);
+          if (cleared) {
+            replacements.set(settingsEntry.name, cleared.bytes);
+            say(`  cleared ${cleared.removed.join(', ')} from settings.ini`, 'ok');
+          }
+        }
+      }
       const blob = N.buildZip(state.zip, replacements, renames);
       const name = state.file.name.replace(/\.zip$/i, '') + '-edited.zip';
       saveAs(blob, name);
@@ -905,6 +917,10 @@ el.navHelp.addEventListener('click', (e) => {
 });
 
 /* ---------- boot ---------- */
+el.clearRoam.checked = localStorage.getItem('nfsu2save.clearRoam') !== 'off';
+el.clearRoam.addEventListener('change', () => {
+  localStorage.setItem('nfsu2save.clearRoam', el.clearRoam.checked ? 'on' : 'off');
+});
 say('$ nfsu2save', 'cmd');
 say('  this tab only · nothing uploaded · every edit re-checksums the container', 'dim');
 updateStatus();

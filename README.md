@@ -61,6 +61,12 @@ The `progress` row counts stage completion: each stage record at `0x9962` holds
 `1` at `+0xFC` once that stage is done. Verified against a fresh stage-0 save
 (all zero) and a stage-6 save (all one), so it reports 0/6 through 6/6.
 
+**Roam overrides.** `settings.ini` keys `roam_block`, `roam_max_cars`,
+`roam_collide` and `roam_friends` (read by the site as `NFSU2_ROAM_*`) can carry
+another session's block, car count or friend name into your profile. The
+`clear roam overrides` checkbox — on by default, remembered in this browser —
+drops those four lines on download and leaves every other key byte-identical.
+
 ## Tuning (dyno + uniques)
 
 Each car carries five 41-byte dyno setups at `+0x354` — Circuit, Drag, Drift,
