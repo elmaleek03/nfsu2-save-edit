@@ -681,7 +681,7 @@ function applyTunePreset(name, slotIndex) {
 }
 
 /* ---------- download ---------- */
-function download() {
+async function download() {
   const save = state.save;
   if (!save) return;
   try {
@@ -703,6 +703,7 @@ function download() {
         return;
       }
       let renames = null;
+      let companion = 0;
       if (rename) {
         const oldName = state.entry.name.split('/').slice(-1)[0];
         renames = new Map([[state.entry.name, rename.profile]]);
@@ -711,6 +712,23 @@ function download() {
           if (renames.has(e.name)) continue;
           const next = renamePath(e.name, oldName, rename.name);
           if (next !== e.name) renames.set(e.name, next);
+        }
+
+        /* The old name is also stored inside companion files: settings.ini's
+           roam_name, autosave-profiles.txt, the mod's own text files, and
+           zero-padded fields in gamefile.bin. Patch those contents too. */
+        for (const e of state.zip.entries) {
+          const isText = /\.(?:txt|ini|json)$/i.test(e.name);
+          const isBin = /(?:^|\/)gamefile\.bin$/i.test(e.name);
+          if (!isText && !isBin) continue;
+          const bytes = replacements.get(e.name) || await N.entryBytes(state.zip, e);
+          const next = isText
+            ? N.replaceNameInText(bytes, oldName, rename.name)
+            : N.replaceNameInBinary(bytes, oldName, rename.name);
+          if (next) {
+            replacements.set(e.name, next);
+            companion += 1;
+          }
         }
       }
       const blob = N.buildZip(state.zip, replacements, renames);
@@ -721,6 +739,7 @@ function download() {
       if (relinked) say('  GARAGE.DAT fingerprint re-linked to the edited profile', 'ok');
       if (rename) {
         say(`  renamed ${renames.size} entr${renames.size === 1 ? 'y' : 'ies'} -> ${rename.profile}`, 'ok');
+        if (companion) say(`  replaced the old name inside ${companion} companion file(s)`, 'ok');
         for (const e of state.zip.entries) {
           const next = renames.get(e.name);
           if (next) e.name = next;

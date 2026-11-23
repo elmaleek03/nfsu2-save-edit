@@ -91,12 +91,23 @@ invalidates the pairing. The app notices and rewrites the fingerprint inside
 `cars untouched` line only appears for money/driver/stage edits; a car edit says
 `car record written` instead.
 
-**Renaming.** The driver name lives at `0xD225`, but nfsu2-web lists profiles by
-folder, so a rename also has to move `NFS Underground 2/<old>/<old>` and its
-`GARAGE.DAT` to `NFS Underground 2/<new>/<new>`. The download does that, warns if
-another profile in the archive already owns the name, and shows the new path in
-the report header with `renames on download`. Names may not contain
-`\ / : * ? " < > |` or control characters.
+**Renaming.** The name is stored in five places, and a rename now moves all of
+them:
+
+| where | what |
+| --- | --- |
+| `0xD225` | 32-byte driver field |
+| `0xD250`, `0xD264` | two 20-byte copies in the auxiliary object |
+| `settings.ini` | `roam_name = …` (the free-roam name) |
+| `autosave-profiles.txt` | the list of profiles the page has set to autosave |
+| `gamefile.bin` | three zero-padded fields, rewritten in place so no offset moves |
+
+nfsu2-web also lists profiles by folder, so the zip entries move with it:
+`NFS Underground 2/<old>/<old>` and its `GARAGE.DAT`, plus the mod's own
+`BayviewForever/endless-career/<name>/` and `carlot/<name>.txt`. Text entries are
+patched as whole words, `gamefile.bin` only where the field is NUL-terminated, and
+the download refuses a name another profile in the archive already owns. Names may
+not contain `\ / : * ? " < > |` or control characters.
 
 Garage slots 6–25 live in `GARAGE.DAT` itself and are not tunable from the UI
 yet — they would need no fingerprint work at all, which makes them the easy next

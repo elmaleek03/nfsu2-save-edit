@@ -134,7 +134,13 @@ const NFSU2 = (() => {
       const codes = [...text].map((ch) => ch.codePointAt(0));
       if (codes.some((c) => c > 0xff)) throw new SaveError('name may only use Latin-1 characters');
       if (codes.length > NAME_MAX) throw new SaveError(`name is limited to ${NAME_MAX} characters`);
-      for (let i = 0; i < NAME_FIELD; i++) this.bytes[OFF_NAME + i] = i < codes.length ? codes[i] : 0;
+      /* The save keeps the name in the 32-byte driver field and again in two
+         20-byte spans of the auxiliary object at 0xD250 and 0xD264. All three
+         are zero-padded, and the game reads the spans in places (profile lists,
+         messages), so they have to move together. */
+      for (const [offset, width] of [[OFF_NAME, NAME_FIELD], [0xd250, 20], [0xd264, 20]]) {
+        for (let i = 0; i < width; i++) this.bytes[offset + i] = i < codes.length ? codes[i] : 0;
+      }
     }
 
     slots() {
@@ -367,6 +373,66 @@ const NFSU2 = (() => {
   /** Fingerprint a career save the way nfsu2-web pairs it with GARAGE.DAT. */
   function garageFingerprint(careerBytes) {
     return fnv1a64(careerBytes, 36, 39266);
+  }
+
+  /* ---------- name references outside the save ----------
+     The site and the mods also keep the profile name in text files (settings.ini
+     roam_name, autosave-profiles.txt, the endless-career comments) and in
+     zero-padded fields of gamefile.bin. These helpers rewrite them in place so a
+     rename does not leave the old name behind. */
+  function latin1Bytes(text) {
+    const out = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
+    return out;
+  }
+
+  function latin1Text(bytes) {
+    let out = '';
+    for (const b of bytes) out += String.fromCharCode(b);
+    return out;
+  }
+
+  /** Replaces whole-word occurrences in a latin-1 text blob; null when unchanged. */
+  function replaceNameInText(bytes, from, to) {
+    if (!from || from === to) return null;
+    const text = latin1Text(bytes);
+    let changed = false;
+    const out = text.split(/([^A-Za-z0-9_]+)/).map((token) => {
+      if (token === from) {
+        changed = true;
+        return to;
+      }
+      return token;
+    }).join('');
+    return changed ? latin1Bytes(out) : null;
+  }
+
+  /** Replaces occurrences inside zero-padded binary fields, keeping offsets.
+      Returns new bytes, or null when nothing matched or a field is too narrow. */
+  function replaceNameInBinary(bytes, from, to) {
+    if (!from || from === to) return null;
+    const src = latin1Bytes(from);
+    const dst = latin1Bytes(to);
+    if (dst.length > src.length) return null;
+    const out = bytes.slice();
+    let hits = 0;
+    for (let i = out.length - src.length; i >= 0; i--) {
+      let match = true;
+      for (let j = 0; j < src.length; j++) {
+        if (out[i + j] !== src[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (!match) continue;
+      const after = i + src.length;
+      if (after < out.length && out[after] !== 0) continue;
+      out.fill(0, i, after);
+      out.set(dst, i);
+      hits += 1;
+      i -= src.length - 1;
+    }
+    return hits ? out : null;
   }
 
   /** Returns a copy of GARAGE.DAT with its pairing fingerprint rewritten. */
@@ -614,6 +680,7 @@ const NFSU2 = (() => {
     nfsu2Crc, zipCrc32, fnv1a64, readGarage,
     openZip, entryBytes, buildZip, profileEntries,
     garageFingerprint, writeGarageFingerprint,
+    replaceNameInText, replaceNameInBinary,
     moneyText, parseMoneyInput, changedRanges, hex, crcText,
     bStringHash, carName, carLabel, CAR_NAMES,
     MAGIC, PROFILE_SIZE, MAX_MONEY, NAME_MAX, STAGE_NAMES,

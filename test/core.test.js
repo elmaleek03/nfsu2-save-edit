@@ -211,6 +211,19 @@ async function main() {
   assert.ok(Object.values(nameBack.checksums()).every(Boolean));
   ok(`rename moves the entries to ${newProfile} and keeps the save valid`);
 
+  // the name is stored in three places in the save, and again in companion files
+  const spans = new N.CareerSave(bytes.slice());
+  spans.setName('RUSDI');
+  for (const off of [0xd250, 0xd264]) {
+    assert.equal(Buffer.from(spans.bytes.subarray(off, off + 5)).toString('latin1'), 'RUSDI');
+    assert.equal(spans.bytes[off + 19], 0, 'aux span not zero-padded');
+  }
+  const text = N.replaceNameInText(Buffer.from('roam_name = MALEEK\n'), 'MALEEK', 'RUSDI');
+  assert.equal(Buffer.from(text).toString('latin1'), 'roam_name = RUSDI\n');
+  const bin = N.replaceNameInBinary(Buffer.from('2857.MALEEK\u0000\u0000', 'latin1'), 'MALEEK', 'RUSDI');
+  assert.equal(Buffer.from(bin).toString('latin1'), '2857.RUSDI\u0000\u0000\u0000');
+  ok('name lands in the aux spans and companion text/binary files');
+
   // bare profile path
   const rawBytes = new Uint8Array(fs.readFileSync(rawPath));  const rawSave = new N.CareerSave(rawBytes);
   assert.ok(rawSave.checksums().a);
