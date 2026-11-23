@@ -6,6 +6,16 @@
 
 const N = window.NFSU2;
 
+/* Ranges that must never move when a scalar field is edited. */
+const CAR_RECORDS = [0x5868, 0x8022]; // five career car records, 0x7F2 apart
+const FINGERPRINT_RANGE = [36, 39266]; // what GARAGE.DAT fingerprints
+
+function sameRegion(a, b, [start, end]) {
+  if (a.length !== b.length || b.length < end) return false;
+  for (let i = start; i < end; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 const state = {
   file: null,
   kind: null,      // 'profile' | 'zip'
@@ -14,6 +24,7 @@ const state = {
   garage: null,
   original: null,  // untouched profile bytes
   save: null,      // working copy
+  showEmpty: false, // reveal empty car slots in the report
 };
 
 const el = {
@@ -187,6 +198,63 @@ function carState(slot) {
   return 'owned';
 }
 
+function carRow(slot) {
+  const status = carState(slot);
+  const tr = document.createElement('tr');
+  const cells = [
+    ['k', String(slot.index), ''],
+    ['v', slot.used ? N.hex(slot.carType, 8) : '—', slot.used ? 'v--hashed' : 'v--idle'],
+    ['v', slot.used ? N.hex(slot.carKey, 8) : '—', slot.used ? '' : 'v--idle'],
+    ['v', status, status === 'empty' ? 'v--idle' : status === 'owned' ? '' : 'v--warn'],
+  ];
+  for (const [cls, text, extra] of cells) {
+    const td = document.createElement('td');
+    td.className = `${cls} ${extra}`.trim();
+    td.textContent = text;
+    tr.appendChild(td);
+  }
+  return tr;
+}
+
+function groupRow(label) {
+  const tr = document.createElement('tr');
+  tr.className = 'rowgroup';
+  const td = document.createElement('td');
+  td.colSpan = 4;
+  td.textContent = label;
+  tr.appendChild(td);
+  return tr;
+}
+
+function toggleRow(label, expandable) {
+  const tr = document.createElement('tr');
+  tr.className = 'rowtoggle';
+  if (expandable) tr.dataset.toggleEmpty = '1';
+  const td = document.createElement('td');
+  td.colSpan = 4;
+  td.textContent = label;
+  tr.appendChild(td);
+  return tr;
+}
+
+/* "9-25" / "9, 11-13" — keeps the empty tail on one line. */
+function rangeLabel(nums) {
+  if (!nums.length) return '';
+  const parts = [];
+  let start = nums[0];
+  let prev = nums[0];
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] === prev + 1) {
+      prev = nums[i];
+      continue;
+    }
+    parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+    start = prev = nums[i];
+  }
+  parts.push(start === prev ? `${start}` : `${start}-${prev}`);
+  return parts.join(', ');
+}
+
 function renderReport() {
   const save = state.save;
   if (!save) {
@@ -203,8 +271,13 @@ function renderReport() {
 
   const c = save.checksums();
   const ok = c.a && c.b && c.h;
-  const slots = save.slots();
-  const used = slots.filter((s) => s.used).length;
+  const career = save.slots();
+  const garage = state.garage;
+  const garageSlots = garage && garage.slots ? garage.slots : [];
+  const all = career.concat(garageSlots);
+  const careerUsed = career.filter((s) => s.used).length;
+  const garageUsed = garageSlots.filter((s) => s.used).length;
+  const used = careerUsed + garageUsed;
 
   const rows = [
     kvRow('file', `career save · ${save.size.toLocaleString('en-US')} B · compat ${N.hex(save.compat, 3)}`),
@@ -214,13 +287,14 @@ function renderReport() {
     kvRow('stage', `${save.stage} · ${N.STAGE_NAMES[save.stage] || 'unknown'}`),
     kvRow('money', N.moneyText(save.money), 'v--money'),
     kvRow('events', `${save.events} active entries`),
-    kvRow('cars', `${used} / ${slots.length} slots in use`),
+    kvRow('cars', garageSlots.length
+      ? `${used} / ${all.length} in use · ${careerUsed} career · ${garageUsed} garage`
+      : `${careerUsed} / ${career.length} in use`),
   ];
 
-  const garage = state.garage;
   if (garage && garage.version) {
-    const recs = garage.records ? ` · ${garage.records} B/record` : '';
-    rows.push(kvRow('garage', `v${garage.version}${recs} · ${garage.paired ? 'paired' : 'stale fingerprint'}`,
+    const shape = `${garage.count} × ${garage.recordLength} B`;
+    rows.push(kvRow('garage', `v${garage.version} · ${shape} · ${garage.paired ? 'paired' : 'stale fingerprint'}`,
       garage.paired ? '' : 'v--warn'));
   } else if (garage && garage.error) {
     rows.push(kvRow('garage', `unusable: ${garage.error}`, 'v--warn'));
@@ -230,23 +304,36 @@ function renderReport() {
 
   el.kvBody.replaceChildren(...rows);
 
-  el.carsBody.replaceChildren(...slots.map((slot) => {
-    const state_ = carState(slot);
-    const tr = document.createElement('tr');
-    const cells = [
-      ['k', String(slot.index), ''],
-      ['v', slot.used ? N.hex(slot.carType, 8) : '—', slot.used ? 'v--hashed' : 'v--idle'],
-      ['v', slot.used ? N.hex(slot.carKey, 8) : '—', slot.used ? '' : 'v--idle'],
-      ['v', state_, state_ === 'empty' ? 'v--idle' : state_ === 'owned' ? '' : 'v--warn'],
-    ];
-    for (const [cls, text, extra] of cells) {
-      const td = document.createElement('td');
-      td.className = `${cls} ${extra}`.trim();
-      td.textContent = text;
-      tr.appendChild(td);
+  el.carsHead.textContent = garageSlots.length
+    ? `cars · ${used} of ${all.length} in use`
+    : 'cars';
+
+  const body = [];
+
+  const addGroup = (label, list) => {
+    body.push(groupRow(label));
+    const empty = list.filter((s) => !s.used);
+    for (const slot of list) if (slot.used) body.push(carRow(slot));
+    if (!empty.length) return;
+    if (state.showEmpty) {
+      for (const slot of empty) body.push(carRow(slot));
+      body.push(toggleRow(`[−] hide ${empty.length} empty slot${empty.length === 1 ? '' : 's'}`, true));
+    } else {
+      body.push(toggleRow(
+        `[+] ${empty.length} empty · slot${empty.length === 1 ? '' : 's'} ${rangeLabel(empty.map((s) => s.index))}`,
+        true,
+      ));
     }
-    return tr;
-  }));
+  };
+
+  addGroup(`career save · slots 1-${career.length}`, career);
+  if (garageSlots.length) {
+    addGroup(
+      `garage file · slots ${N.GARAGE_FIRST_SLOT}-${N.GARAGE_FIRST_SLOT + garageSlots.length - 1}`,
+      garageSlots,
+    );
+  }
+  el.carsBody.replaceChildren(...body);
 }
 
 /* ---------- editor ---------- */
@@ -297,6 +384,7 @@ function resetState() {
   state.garage = null;
   state.original = null;
   state.save = null;
+  state.showEmpty = false;
 }
 
 function commit(label, apply) {
@@ -309,8 +397,19 @@ function commit(label, apply) {
     if (!(c.a && c.b && c.h)) throw new N.SaveError('checksums failed to settle');
     const ranges = N.changedRanges(state.original, save.bytes);
     const total = ranges.reduce((n, [s, e]) => n + (e - s), 0);
+
+    const carsIntact = sameRegion(state.original, save.bytes, CAR_RECORDS);
+    const fpIntact = state.garage && state.garage.fingerprint !== undefined
+      ? N.fnv1a64(save.bytes, FINGERPRINT_RANGE[0], FINGERPRINT_RANGE[1]) === state.garage.fingerprint
+      : null;
+
     say(`$ ${label}`, 'cmd');
     say(`  ok · ${N.crcText(c)}`, 'ok');
+    say(
+      `  ${carsIntact ? 'cars untouched' : 'CARS CHANGED'} · 0x5868..0x8022`
+      + (fpIntact === null ? '' : ` · garage ${fpIntact ? 'still paired' : 'FINGERPRINT BROKEN'}`),
+      carsIntact && fpIntact !== false ? 'dim' : 'err',
+    );
     if (total) say(`  ${total} B differ from the file you loaded`, 'dim');
     renderReport();
     updateStatus();
@@ -431,6 +530,12 @@ el.stage.addEventListener('keydown', (e) => { if (e.key === 'Enter') el.applySta
 el.stage.addEventListener('input', () => el.stage.classList.add('is-dirty'));
 
 el.download.addEventListener('click', download);
+
+el.carsBody.addEventListener('click', (e) => {
+  if (!e.target.closest('tr[data-toggle-empty]')) return;
+  state.showEmpty = !state.showEmpty;
+  renderReport();
+});
 
 el.revert.addEventListener('click', () => {
   if (!state.original) return;

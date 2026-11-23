@@ -260,6 +260,28 @@ table.kv--cars td.v { font-size: 12px; }
 table.kv td.v--idle { color: var(--overlay); }
 table.kv td.v--hashed { color: var(--blue); }
 
+/* empty slots collapse into one row, so the list stays short by default */
+.table-wrap--cars { overflow-y: visible; }
+table.kv--cars tr.rowgroup td {
+  padding: 7px 12px 4px;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--overlay);
+  background: var(--crust);
+  border-top: 1px solid var(--surface0);
+  border-bottom: 1px solid var(--surface0);
+  width: auto;
+}
+table.kv--cars tr.rowtoggle td {
+  padding: 5px 12px;
+  color: var(--overlay);
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+}
+table.kv--cars tr.rowtoggle:hover td { color: var(--green); }
+
 /* ---------- editor ---------- */
 .row {
   display: flex;

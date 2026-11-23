@@ -141,7 +141,16 @@ const NFSU2 = (() => {
     }
   }
 
-  /* ---------- GARAGE.DAT ---------- */
+  /* ---------- GARAGE.DAT ----------
+     The file is a 32-byte header followed by one 2,034-byte record per garage
+     slot. nfsu2-web writes 5 records (slots 6-10); the nfsu2mod fork writes 20
+     (slots 6-25). Every record keeps its slot handle at +4 even when empty, and
+     the career-slot payload starts 8 bytes into the record. */
+  const GARAGE_HEADER = 32;
+  const GARAGE_RECORD = 2034;
+  const GARAGE_FIRST_SLOT = 6;
+  const SLOT_PAYLOAD = 8;
+
   function fnv1a64(bytes, start, end) {
     let h = 0xcbf29ce484222325n;
     const prime = 0x100000001b3n;
@@ -151,16 +160,32 @@ const NFSU2 = (() => {
   }
 
   function readGarage(bytes) {
-    if (bytes.length < 32) return null;
+    if (bytes.length < GARAGE_HEADER + GARAGE_RECORD) return null;
     if (bytes[0] !== 0x4e || bytes[1] !== 0x32 || bytes[2] !== 0x47 || bytes[3] !== 0x41) return null;
+    const body = bytes.length - GARAGE_HEADER;
+    if (body % GARAGE_RECORD !== 0) return null;
     const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const low = BigInt(v.getUint32(8, true));
     const high = BigInt(v.getUint32(12, true));
-    const rest = bytes.length - 32;
+    const count = body / GARAGE_RECORD;
+    const slots = [];
+    for (let i = 0; i < count; i++) {
+      const p = GARAGE_HEADER + i * GARAGE_RECORD + SLOT_PAYLOAD;
+      slots.push({
+        index: GARAGE_FIRST_SLOT + i,
+        used: v.getUint16(p + 0x27c, true) !== 0,
+        carType: v.getUint32(p + 0x14, true),
+        carKey: v.getUint32(p + 0x2bc, true),
+        locked: bytes[p + 0x428] !== 0,
+        bought: bytes[p + 0x429] !== 0,
+      });
+    }
     return {
       version: v.getUint32(4, true),
       fingerprint: (high << 32n) | low,
-      records: rest % 5 === 0 ? rest / 5 : null,
+      recordLength: GARAGE_RECORD,
+      count,
+      slots,
     };
   }
 
@@ -366,6 +391,7 @@ const NFSU2 = (() => {
     openZip, entryBytes, buildZip, profileEntries,
     moneyText, parseMoneyInput, changedRanges, hex, crcText,
     MAGIC, PROFILE_SIZE, MAX_MONEY, NAME_MAX, STAGE_NAMES,
+    GARAGE_FIRST_SLOT, GARAGE_RECORD,
   };
 })();
 

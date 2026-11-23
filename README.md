@@ -35,6 +35,21 @@ Every edit recomputes the container's three CRCs with the game's own algorithm
 see `core.js`). `GARAGE.DAT` is never touched: its FNV-1a fingerprint covers
 career bytes `[36, 39266)` and the money sits past that, so the pairing survives.
 
+## Cars
+
+The save holds 5 career slots at `0x5868`, `0x7F2` bytes each. `GARAGE.DAT` holds
+one 2,034-byte record per further slot: **5 records on plain nfsu2-web (slots
+6-10), 20 on the nfsu2mod fork (slots 6-25)** — so this version gives a career
+25 cars in total. Each garage record keeps its slot handle at `+4` even when
+empty and its payload starts 8 bytes in, so the same offsets apply as in a
+career slot (`+0x14` car type, `+0x2BC` model key, `+0x27C` used flag).
+
+The report lists them all, with the empty tail collapsed into one clickable row.
+Editing money touches neither the car records (`0x5868-0x8022`) nor the
+fingerprinted range, and the log says so on every edit: `cars untouched ·
+garage still paired`. If a future field ever did reach the cars, that line turns
+red.
+
 Downloading a backup returns the same archive with only those bytes changed —
 the other 136 entries are sliced straight out of the original file, so a 448 MB
 backup rebuilds in about a second without ever landing in memory. Then

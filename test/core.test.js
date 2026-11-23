@@ -97,9 +97,23 @@ async function main() {
   const garageEntry = redo.entries.find((e) => e.name === `${folder}/GARAGE.DAT`);
   if (garageEntry) {
     const garage = N.readGarage(await N.entryBytes(redo, garageEntry));
-    assert.ok(garage.paired === undefined || true);
     assert.equal(N.fnv1a64(edited.bytes, 36, 39266), garage.fingerprint);
     ok('garage fingerprint still matches the edited profile');
+
+    assert.equal(garage.slots.length, garage.count);
+    assert.equal(garage.slots[0].index, N.GARAGE_FIRST_SLOT);
+    assert.equal(garage.slots.at(-1).index, N.GARAGE_FIRST_SLOT + garage.count - 1);
+    const owned = garage.slots.filter((s) => s.used);
+    assert.ok(owned.every((s) => s.carType !== 0));
+    ok(`garage parses as ${garage.count} slots (6-${garage.slots.at(-1).index}), ${owned.length} in use`);
+
+    // a money edit must not disturb the car records of the garage file
+    assert.deepEqual(
+      Buffer.from(await N.entryBytes(redo, garageEntry)),
+      Buffer.from(await N.entryBytes(zip, garageEntry)),
+      'GARAGE.DAT changed during a money edit',
+    );
+    ok('GARAGE.DAT is byte-identical after the edit');
   }
 
   // bare profile path
