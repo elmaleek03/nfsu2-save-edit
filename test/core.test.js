@@ -186,9 +186,33 @@ async function main() {
     ok('garage fingerprint re-link rewrites both halves');
   }
 
+  // a rename has to carry the zip entries with it, or the site keeps the old profile
+  const renameZip = await N.openZip(fileOf(zipPath));
+  const oldEntry = N.profileEntries(renameZip)[0];
+  const oldFolder = oldEntry.name.slice(0, oldEntry.name.lastIndexOf('/'));
+  const parent = oldFolder.slice(0, Math.max(0, oldFolder.lastIndexOf('/')));
+  const newProfile = `${parent}/TESTER/TESTER`;
+  const renamedSave = new N.CareerSave((await N.entryBytes(renameZip, oldEntry)).slice());
+  renamedSave.setName('TESTER');
+  renamedSave.fixChecksums();
+  const renames = new Map([[oldEntry.name, newProfile]]);
+  const oldGarage = renameZip.entries.find((e) => e.name === `${oldFolder}/GARAGE.DAT`);
+  if (oldGarage) renames.set(oldGarage.name, `${parent}/TESTER/GARAGE.DAT`);
+  const renamedBlob = N.buildZip(renameZip, new Map([[oldEntry.name, renamedSave.bytes]]), renames);
+  const renamedPath = path.join(outDir, 'renamed.zip');
+  fs.writeFileSync(renamedPath, Buffer.from(await renamedBlob.arrayBuffer()));
+  const reopened = await N.openZip(fileOf(renamedPath));
+  assert.ok(reopened.entries.some((e) => e.name === newProfile), 'profile entry not renamed');
+  if (oldGarage) {
+    assert.ok(reopened.entries.some((e) => e.name === `${parent}/TESTER/GARAGE.DAT`), 'garage entry not renamed');
+  }
+  const nameBack = new N.CareerSave(await N.entryBytes(reopened, reopened.entries.find((e) => e.name === newProfile)));
+  assert.equal(nameBack.name, 'TESTER');
+  assert.ok(Object.values(nameBack.checksums()).every(Boolean));
+  ok(`rename moves the entries to ${newProfile} and keeps the save valid`);
+
   // bare profile path
-  const rawBytes = new Uint8Array(fs.readFileSync(rawPath));
-  const rawSave = new N.CareerSave(rawBytes);
+  const rawBytes = new Uint8Array(fs.readFileSync(rawPath));  const rawSave = new N.CareerSave(rawBytes);
   assert.ok(rawSave.checksums().a);
   rawSave.setMoney(777777);
   rawSave.fixChecksums();

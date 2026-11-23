@@ -128,6 +128,9 @@ const NFSU2 = (() => {
 
     setName(text) {
       if (typeof text !== 'string' || text.length === 0) throw new SaveError('name cannot be empty');
+      if (/[\\/:*?"<>|\x00-\x1f]/.test(text)) {
+        throw new SaveError('name cannot contain \\ / : * ? " < > | or control characters');
+      }
       const codes = [...text].map((ch) => ch.codePointAt(0));
       if (codes.some((c) => c > 0xff)) throw new SaveError('name may only use Latin-1 characters');
       if (codes.length > NAME_MAX) throw new SaveError(`name is limited to ${NAME_MAX} characters`);
@@ -495,10 +498,11 @@ const NFSU2 = (() => {
   }
 
   /* Rebuild the archive with one or more entries replaced.
-     `replacements` is a Map of entry name -> Uint8Array. Untouched entries are
-     sliced straight out of the original file, so a 400 MB backup never lands
-     in RAM. */
-  function buildZip(zip, replacements) {
+     `replacements` is a Map of entry name -> Uint8Array, `renames` an optional
+     Map of entry name -> new entry name (used for a profile rename). Untouched
+     entries are sliced straight out of the original file, so a 400 MB backup
+     never lands in RAM. */
+  function buildZip(zip, replacements, renames) {
     const map = replacements instanceof Map ? replacements : new Map([[replacements, arguments[2]]]);
     const enc = new TextEncoder();
     const parts = [];
@@ -506,7 +510,8 @@ const NFSU2 = (() => {
     let offset = 0;
 
     for (const e of zip.entries) {
-      const nameBytes = enc.encode(e.name);
+      const entryName = (renames && renames.get(e.name)) || e.name;
+      const nameBytes = enc.encode(entryName);
       let method = e.method;
       let crc = e.crc;
       let csize = e.csize;

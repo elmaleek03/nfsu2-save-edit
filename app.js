@@ -208,6 +208,25 @@ function crcCell(c) {
   return frag;
 }
 
+/* The profile lives at <parent>/<driver>/<driver>, so renaming the driver has to
+   move the zip entries too - otherwise the site keeps listing the old profile. */
+function pendingRename() {
+  if (state.kind !== 'zip' || !state.entry || !state.save) return null;
+  const path = state.entry.name;
+  const last = path.lastIndexOf('/');
+  const folder = path.slice(0, last);
+  const current = path.slice(last + 1);
+  const name = state.save.name;
+  if (!name || name === current) return null;
+  const parent = folder.slice(0, Math.max(0, folder.lastIndexOf('/')));
+  const base = parent ? `${parent}/` : '';
+  return {
+    name,
+    profile: `${base}${name}/${name}`,
+    garage: state.garageEntry ? `${base}${name}/GARAGE.DAT` : null,
+  };
+}
+
 function carState(slot) {
   if (!slot.used) return 'empty';
   if (slot.locked) return 'locked';
@@ -403,9 +422,10 @@ function renderReport() {
   el.report.hidden = false;
 
   const isZip = state.kind === 'zip';
-  el.reportTitle.textContent = isZip ? state.entry.name : state.file.name;
+  const rename = pendingRename();
+  el.reportTitle.textContent = isZip ? (rename ? rename.profile : state.entry.name) : state.file.name;
   el.reportMeta.textContent = isZip
-    ? `backup · ${state.zip.entries.length} entries`
+    ? `backup · ${state.zip.entries.length} entries${rename ? ' · renames on download' : ''}`
     : 'bare profile';
 
   const c = save.checksums();
@@ -661,12 +681,27 @@ function download() {
           relinked = true;
         }
       }
-      const blob = N.buildZip(state.zip, replacements);
+      const rename = pendingRename();
+      if (rename && state.zip.entries.some((e) => e.name === rename.profile && e.name !== state.entry.name)) {
+        say(`error: this backup already has a profile named "${rename.name}"`, 'err');
+        return;
+      }
+      let renames = null;
+      if (rename) {
+        renames = new Map([[state.entry.name, rename.profile]]);
+        if (state.garageEntry && rename.garage) renames.set(state.garageEntry, rename.garage);
+      }
+      const blob = N.buildZip(state.zip, replacements, renames);
       const name = state.file.name.replace(/\.zip$/i, '') + '-edited.zip';
       saveAs(blob, name);
       say(`$ download ${name}`, 'cmd');
       say('  every other entry is copied through untouched', 'dim');
       if (relinked) say('  GARAGE.DAT fingerprint re-linked to the edited profile', 'ok');
+      if (rename) {
+        say(`  renamed entries -> ${rename.profile}`, 'ok');
+        state.entry.name = rename.profile;
+        if (state.garageEntry && rename.garage) state.garageEntry = rename.garage;
+      }
     } else {
       const name = state.file.name + '-edited';
       saveAs(new Blob([save.bytes], { type: 'application/octet-stream' }), name);
@@ -742,6 +777,8 @@ el.applyName.addEventListener('click', () => {
     if (done) {
       el.name.value = state.save.name;
       el.name.classList.remove('is-dirty');
+      const rename = pendingRename();
+      if (rename) say(`  profile folder becomes ${rename.profile} on download`, 'dim');
     }
   } catch (err) {
     say(`error: ${err.message}`, 'err');
