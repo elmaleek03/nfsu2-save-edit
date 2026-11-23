@@ -273,6 +273,33 @@ function carDetail(index) {
   return state.save ? state.save.slotDetail(index) : null;
 }
 
+/* Every slot in the file: the five career records plus whatever GARAGE.DAT holds. */
+function allSlots() {
+  const career = state.save ? state.save.slots() : [];
+  const garage = state.garage && state.garage.slots ? state.garage.slots : [];
+  return career.concat(garage);
+}
+
+/** Live byte buffer + payload base for a slot, whichever file it lives in. */
+function carTarget(index) {
+  if (isGarageSlot(index)) {
+    if (!state.garageBytes) return null;
+    return { index, bytes: state.garageBytes, base: N.garageBase(index), garage: true };
+  }
+  if (!state.save) return null;
+  return { index, bytes: state.save.bytes, base: N.careerBase(index), garage: false };
+}
+
+/* GARAGE.DAT is parsed at load; re-read it after a write so the table shows the
+   new car order. */
+function refreshGarage() {
+  if (!state.garageBytes || !state.garage) return;
+  const parsed = N.readGarage(state.garageBytes);
+  if (!parsed) return;
+  parsed.fingerprint = state.garage.fingerprint;
+  state.garage = parsed;
+}
+
 function carRow(slot) {
   const status = carState(slot);
   const label = slot.used ? N.carLabel(slot.carType) : null;
@@ -323,6 +350,49 @@ function detailRow(slot) {
     v.textContent = ` ${value}`;
     td.append(k, v);
   });
+  tr.appendChild(td);
+  return tr;
+}
+
+/* Rearrange: swap this car with any other slot, career or garage. */
+function arrangeRow(slot) {
+  const others = allSlots().filter((s) => s.index !== slot.index);
+  if (!others.length) return null;
+
+  const tr = document.createElement('tr');
+  tr.className = 'cardetail';
+  tr.dataset.slot = String(slot.index);
+  const td = document.createElement('td');
+  td.colSpan = 5;
+
+  const line = document.createElement('div');
+  line.className = 'cardetail__line';
+
+  const label = document.createElement('span');
+  label.className = 'k';
+  label.textContent = 'arrange';
+
+  const select = document.createElement('select');
+  select.className = 'pick';
+  select.dataset.swapFrom = String(slot.index);
+  for (const other of others) {
+    const option = document.createElement('option');
+    option.value = String(other.index);
+    option.textContent = `${other.index} · ${other.used ? (N.carLabel(other.carType) || 'unknown') : 'empty'}`;
+    select.appendChild(option);
+  }
+
+  const button = document.createElement('button');
+  button.className = 'btn btn--primary';
+  button.dataset.act = 'swap';
+  button.textContent = 'swap';
+
+  const note = document.createElement('span');
+  note.className = 'k';
+  note.textContent = 'car moves, the slot keeps its handle';
+
+  line.append(label, select, button, note);
+  td.appendChild(line);
   tr.appendChild(td);
   return tr;
 }
@@ -521,6 +591,8 @@ function renderReport() {
         if (detail) body.push(detail);
         const tune = tuneRow(slot);
         if (tune) body.push(tune);
+        const arrange = arrangeRow(slot);
+        if (arrange) body.push(arrange);
       }
     }
     if (!empty.length) return;
@@ -642,6 +714,54 @@ function commit(label, apply, opts = {}) {
     say(`error: ${err.message}`, 'err');
     return false;
   }
+}
+
+/* ---------- rearrange ---------- */
+function commitSwap(label, mutate) {
+  const save = state.save;
+  if (!save) return false;
+  try {
+    const saveBefore = save.bytes.slice();
+    const garageBefore = state.garageBytes ? state.garageBytes.slice() : null;
+    mutate();
+    const saveChanged = N.changedRanges(saveBefore, save.bytes).length > 0;
+    if (saveChanged) save.fixChecksums();
+    const checks = save.checksums();
+    if (!(checks.a && checks.b && checks.h)) throw new N.SaveError('checksums failed to settle');
+    const garageChanged = garageBefore ? N.changedRanges(garageBefore, state.garageBytes).length > 0 : false;
+    if (garageChanged) refreshGarage();
+    say(`$ ${label}`, 'cmd');
+    say(`  ok · ${N.crcText(checks)}`, 'ok');
+    const parts = [];
+    if (saveChanged) parts.push('career save written');
+    if (garageChanged) parts.push('GARAGE.DAT written');
+    say(`  ${parts.join(' · ')}${saveChanged && state.garageBytes ? ' · fingerprint re-links on download' : ''}`, 'dim');
+    renderReport();
+    updateStatus();
+    return true;
+  } catch (err) {
+    say(`error: ${err.message}`, 'err');
+    return false;
+  }
+}
+
+function swapCars(from, to) {
+  if (!from || !to || from === to) return;
+  const a = carTarget(from);
+  const b = carTarget(to);
+  if (!a || !b) {
+    say('error: that slot is not in this save', 'err');
+    return;
+  }
+  const handles = [N.slotHandle(a.bytes, a.base), N.slotHandle(b.bytes, b.base)];
+  state.detailSlot = to;
+  commitSwap(`swap slot ${from} <-> ${to}`, () => {
+    N.swapRecords(a, b);
+    if (state.garageBytes && (a.garage || b.garage)) {
+      const moved = N.retargetGarageHandles(state.garageBytes, handles[0], handles[1]);
+      if (moved) say(`  GARAGE.DAT header pointer${moved === 1 ? '' : 's'} follow the car (${moved})`, 'dim');
+    }
+  });
 }
 
 /* ---------- tuning actions ---------- */
@@ -955,6 +1075,12 @@ el.stage.addEventListener('input', () => el.stage.classList.add('is-dirty'));
 el.download.addEventListener('click', download);
 
 el.carsBody.addEventListener('click', (e) => {
+  if (e.target.closest('button[data-act="swap"]')) {
+    const row = e.target.closest('tr');
+    const select = row.querySelector('select[data-swap-from]');
+    if (select) swapCars(Number(select.dataset.swapFrom), Number(select.value));
+    return;
+  }
   const act = e.target.closest('button[data-act]');
   if (act) {
     handleTuneAct(act.dataset.act, Number(act.dataset.slot));

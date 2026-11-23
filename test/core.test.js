@@ -207,6 +207,21 @@ async function main() {
     }
     assert.equal(outside, 0, 'garage tuning touched bytes outside the curves/uniques');
     ok(`garage slot ${N.GARAGE_FIRST_SLOT} tunes through the shared helpers`);
+
+    // cross-file swap: GARAGE.DAT header pointers follow the car
+    const gb = gBytes.slice();
+    const mixed = new N.CareerSave(bytes.slice());
+    const garageHandle = N.slotHandle(gb, N.garageBase(6));
+    const careerHandle = N.slotHandle(mixed.bytes, N.careerBase(1));
+    N.swapRecords({ bytes: mixed.bytes, base: N.careerBase(1) }, { bytes: gb, base: N.garageBase(6) });
+    const movedPointers = N.retargetGarageHandles(gb, careerHandle, garageHandle);
+    assert.ok(movedPointers >= 1, 'no header pointer followed the swap');
+    const hv = new DataView(gb.buffer, gb.byteOffset, gb.byteLength);
+    for (const off of [16, 20, 24]) {
+      const value = hv.getUint32(off, true);
+      assert.ok(value === 0 || value === careerHandle || value === garageHandle, 'header points at a foreign slot');
+    }
+    ok(`career <-> garage swap retargeted ${movedPointers} header pointer(s)`);
   }
 
   // a rename has to carry the zip entries with it, or the site keeps the old profile
@@ -251,6 +266,21 @@ async function main() {
   assert.deepEqual(roam.removed, ['roam_block', 'roam_friends']);
   assert.equal(Buffer.from(roam.bytes).toString('latin1'), 'sound = on\nhorn = klaxon\n');
   ok('roam overrides are dropped from settings.ini');
+
+  // rearranging: payloads swap, each slot keeps its own CAREER_SLOT handle
+  const box = new N.CareerSave(bytes.slice());
+  const s1 = box.slots()[0];
+  const s2 = box.slots()[1];
+  const h1 = N.slotHandle(box.bytes, N.careerBase(1));
+  const h1b = N.slotHandle(box.bytes, N.careerBase(2));
+  N.swapRecords({ bytes: box.bytes, base: N.careerBase(1) }, { bytes: box.bytes, base: N.careerBase(2) });
+  box.fixChecksums();
+  assert.equal(box.slots()[0].carType, s2.carType);
+  assert.equal(box.slots()[1].carType, s1.carType);
+  assert.equal(N.slotHandle(box.bytes, N.careerBase(1)), h1);
+  assert.equal(N.slotHandle(box.bytes, N.careerBase(2)), h1b);
+  assert.ok(Object.values(box.checksums()).every(Boolean));
+  ok('slots 1 and 2 swap cars and keep their handles');
 
   // bare profile path
   const rawBytes = new Uint8Array(fs.readFileSync(rawPath));  const rawSave = new N.CareerSave(rawBytes);

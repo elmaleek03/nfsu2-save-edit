@@ -133,8 +133,42 @@ const NFSU2 = (() => {
     for (let i = 0; i < 9; i++) v.setUint32(base + 0x2e8 + i * 4, values[i] >>> 0, true);
   }
 
-  function readDetailAt(bytes, base) {
-    if (base + SLOT_STRIDE > bytes.length) return null;
+  /* Exchanges two car records' payloads, in one file or across the career save
+     and GARAGE.DAT. `base` is the payload start, so copying [base, base+2026)
+     leaves each record's first eight bytes (its CAREER_SLOT_n handle) alone. */
+  function swapRecords(a, b) {
+    const length = SLOT_STRIDE - SLOT_PAYLOAD;
+    const fromA = a.bytes.slice(a.base, a.base + length);
+    const fromB = b.bytes.slice(b.base, b.base + length);
+    a.bytes.set(fromB, a.base);
+    b.bytes.set(fromA, b.base);
+  }
+
+  /** Slot handle stored at record +4 (also the "career car" pointer in GARAGE.DAT). */
+  function slotHandle(bytes, base) {
+    return viewOf(bytes).getUint32(base - 4, true);
+  }
+
+  /* GARAGE.DAT's header points at the slots holding the career car, the quick
+     race car and the stand-in. When a swap moves a car, those pointers follow it
+     so the same car stays active. */
+  function retargetGarageHandles(garageBytes, aHandle, bHandle) {
+    const v = viewOf(garageBytes);
+    let moved = 0;
+    for (const offset of [16, 20, 24]) {
+      const value = v.getUint32(offset, true);
+      if (value === aHandle) {
+        v.setUint32(offset, bHandle, true);
+        moved += 1;
+      } else if (value === bHandle) {
+        v.setUint32(offset, aHandle, true);
+        moved += 1;
+      }
+    }
+    return moved;
+  }
+
+  function readDetailAt(bytes, base) {    if (base + SLOT_STRIDE > bytes.length) return null;
     const v = viewOf(bytes);
     let parts = 0;
     for (let i = 0; i < 170; i++) if (v.getUint32(base + 0x18 + i * 4, true) !== 0) parts += 1;
@@ -739,6 +773,7 @@ const NFSU2 = (() => {
     SETUP_NAMES, SETUP_SIZE, SETUP_COUNT, NEUTRAL_BYTE, MAX_TUNE_BYTE,
     careerBase, garageBase, readTuneAt, writeTuneAt, fillCurvesAt, fillRampAt,
     setUniquesAt, writeUniquesAt, readDetailAt,
+    swapRecords, slotHandle, retargetGarageHandles,
   };
 })();
 

@@ -57,6 +57,16 @@ bytes, how many of the 9 outrun uniques, how many of the 5 dyno setups, and its
 `CAREER_SLOT_n` handle. None of that is written, ever — only money, driver and
 stage are editable so far.
 
+**Rearranging.** Each car row has an `arrange` line: pick any other slot and
+`swap`. The two 2,034-byte records trade their 2,026-byte payloads while each
+record keeps its own first eight bytes — the `CAREER_SLOT_n` handle — so slot
+numbering survives the move. Swaps work across the two files: a career slot can
+trade places with a garage slot, in which case both files are written and the
+career fingerprint re-links on download. When a swap moves the car that
+`GARAGE.DAT`'s header points at (the career / quick-race / stand-in handles at
+`+0x10`, `+0x14`, `+0x18`), those pointers follow the car so the same car stays
+active.
+
 The `progress` row counts stage completion: each stage record at `0x9962` holds
 `1` at `+0xFC` once that stage is done. Verified against a fresh stage-0 save
 (all zero) and a stage-6 save (all one), so it reports 0/6 through 6/6.
