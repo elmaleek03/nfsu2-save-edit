@@ -77,6 +77,20 @@ another session's block, car count or friend name into your profile. The
 `clear roam overrides` checkbox — on by default, remembered in this browser —
 drops those four lines on download and leaves every other key byte-identical.
 
+## Performance parts
+
+The car row's `parts` line shows `40/68 set · 56/56 bought` and a `[max parts]`
+button. That button works from the game's own conflict map, not by filling the
+block: the 68 installed flags form families of mutually exclusive levels, so it
+installs the top member of each of the 36 performance families and clears the
+lower ones, then sets every one of the 56 performance bits in the purchase
+bitset at `+0x586`. Conflicts stay at zero, and the aero/body IDs 56–67 —
+derived by the executable from visual parts — are left exactly as they were.
+
+The 56 bits land in seven `ff` bytes, with the ninth (visual) byte untouched.
+This is a car-record write like tuning, so career edits re-link the garage
+fingerprint on download and garage edits just carry the modified file.
+
 ## Tuning (dyno + uniques)
 
 Each car carries five 41-byte dyno setups at `+0x354` — Circuit, Drag, Drift,

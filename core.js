@@ -168,6 +168,55 @@ const NFSU2 = (() => {
     return moved;
   }
 
+  /* ---------- performance parts ----------
+     The 68 installed-item bytes at +0x310 follow the game's own conflict map:
+     each family is a set of mutually exclusive levels. To install "everything
+     at the top", set the family's best member (usually level 3) and clear the
+     rest. IDs 56-67 are the aero/body family the executable derives from visual
+     parts, so they stay untouched. The purchase bitset at +0x586 marks the 56
+     performance IDs as bought; the ninth byte (visual) is left alone. */
+  const PERF_OFF = 0x310;
+  const PERF_PURCHASE_OFF = 0x586;
+  const PERF_COUNT = 68;
+  const PERF_PERF_IDS = 56;
+
+  /* [index to install, [other members of the same family to clear]] */
+  const PERF_PLAN = [
+    [0, []], [1, []], [2, []], [3, []], [4, []], [5, []],
+    [6, []], [7, []], [11, [8, 9]], [10, []],
+    [14, [12, 13]],
+    [19, [15]], [16, []], [25, [17]], [22, [18]], [20, []], [21, []], [23, []], [24, []],
+    [28, [26, 27]],
+    [35, [29, 31]], [30, []], [37, [32]], [36, []],
+    [42, [38]], [39, []], [43, [40, 41]], [44, []],
+    [45, []], [51, [46]], [47, []], [48, []], [49, []], [50, []], [52, []],
+    [55, [53, 54]],
+  ];
+
+  function readPerformanceAt(bytes, base) {
+    if (base + SLOT_STRIDE > bytes.length) return null;
+    let set = 0;
+    for (let i = 0; i < PERF_COUNT; i++) if (bytes[base + PERF_OFF + i]) set += 1;
+    let bought = 0;
+    for (let i = 0; i < PERF_PERF_IDS; i++) {
+      if (bytes[base + PERF_PURCHASE_OFF + (i >> 3)] & (1 << (i & 7))) bought += 1;
+    }
+    return { set, bought, total: PERF_COUNT, buyable: PERF_PERF_IDS };
+  }
+
+  /** Installs the top member of every performance family and marks all 56 as bought. */
+  function maxPerformanceAt(bytes, base) {
+    if (base + SLOT_STRIDE > bytes.length) throw new SaveError('car record is outside this file');
+    for (const [on, offs] of PERF_PLAN) {
+      bytes[base + PERF_OFF + on] = 1;
+      for (const off of offs) bytes[base + PERF_OFF + off] = 0;
+    }
+    for (let i = 0; i < PERF_PERF_IDS; i++) {
+      bytes[base + PERF_PURCHASE_OFF + (i >> 3)] |= 1 << (i & 7);
+    }
+    return PERF_PLAN.length;
+  }
+
   function readDetailAt(bytes, base) {    if (base + SLOT_STRIDE > bytes.length) return null;
     const v = viewOf(bytes);
     let parts = 0;
@@ -774,6 +823,7 @@ const NFSU2 = (() => {
     careerBase, garageBase, readTuneAt, writeTuneAt, fillCurvesAt, fillRampAt,
     setUniquesAt, writeUniquesAt, readDetailAt,
     swapRecords, slotHandle, retargetGarageHandles,
+    readPerformanceAt, maxPerformanceAt, PERF_PLAN, PERF_PERF_IDS,
   };
 })();
 

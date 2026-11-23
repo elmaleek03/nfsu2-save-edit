@@ -266,8 +266,14 @@ function carTune(index) {
   return state.save ? state.save.slotTune(index) : null;
 }
 
-function carDetail(index) {
+function carPerformance(index) {
   if (isGarageSlot(index)) {
+    return state.garageBytes ? N.readPerformanceAt(state.garageBytes, N.garageBase(index)) : null;
+  }
+  return state.save ? N.readPerformanceAt(state.save.bytes, N.careerBase(index)) : null;
+}
+
+function carDetail(index) {  if (isGarageSlot(index)) {
     return state.garageBytes ? N.readDetailAt(state.garageBytes, N.garageBase(index)) : null;
   }
   return state.save ? state.save.slotDetail(index) : null;
@@ -488,6 +494,16 @@ function tuneRow(slot) {
     button('uniques-off', 'none'),
     select,
   ));
+
+  const perf = carPerformance(slot.index);
+  if (perf) {
+    td.append(line(
+      label('parts'),
+      value(`${perf.set}/${perf.total} set · ${perf.bought}/${perf.buyable} bought`),
+      ' ',
+      button('parts-max', 'max parts', 'install the top member of every performance family and mark all 56 IDs as bought; aero stays as is'),
+    ));
+  }
 
   tr.appendChild(td);
   return tr;
@@ -833,6 +849,16 @@ function handleTuneAct(act, slotIndex) {
     const label = `uniques none · slot ${slotIndex}`;
     if (garage) commitGarage(label, (b) => N.setUniquesAt(b, base, false));
     else commit(label, (s) => s.setUniques(slotIndex, false), { car: true });
+  } else if (act === 'parts-max') {
+    const label = `parts max · slot ${slotIndex}`;
+    let families = 0;
+    if (garage) {
+      const done = commitGarage(label, (b) => { families = N.maxPerformanceAt(b, base); });
+      if (done) say(`  ${families} performance families · 56 purchase bits on`, 'dim');
+    } else {
+      const done = commit(label, (s) => { families = N.maxPerformanceAt(s.bytes, N.careerBase(slotIndex)); }, { car: true });
+      if (done) say(`  ${families} performance families · 56 purchase bits on`, 'dim');
+    }
   }
 }
 

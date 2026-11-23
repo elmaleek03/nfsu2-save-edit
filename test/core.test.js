@@ -282,6 +282,29 @@ async function main() {
   assert.ok(Object.values(box.checksums()).every(Boolean));
   ok('slots 1 and 2 swap cars and keep their handles');
 
+  // max parts: top member of every family, all 56 purchase bits, nothing else
+  const perfBox = new N.CareerSave(bytes.slice());
+  const perfBase = N.careerBase(1);
+  const flagsBefore = perfBox.bytes.slice(perfBase + 0x310, perfBase + 0x310 + 68);
+  const buyBefore = perfBox.bytes.slice(perfBase + 0x586, perfBase + 0x586 + 9);
+  const families = N.maxPerformanceAt(perfBox.bytes, perfBase);
+  perfBox.fixChecksums();
+  const flagsAfter = perfBox.bytes.slice(perfBase + 0x310, perfBase + 0x310 + 68);
+  const buyAfter = perfBox.bytes.slice(perfBase + 0x586, perfBase + 0x586 + 9);
+  assert.equal(families, N.PERF_PLAN.length);
+  // no family may end with two members set
+  for (const [on, offs] of N.PERF_PLAN) {
+    assert.equal(flagsAfter[on], 1, `family ${on} not installed`);
+    for (const off of offs) assert.equal(flagsAfter[off], 0, `conflicting ${off} left set`);
+  }
+  // aero 56-67 untouched
+  for (let i = 56; i < 68; i++) assert.equal(flagsAfter[i], flagsBefore[i], `aero byte ${i} changed`);
+  // purchase bits 0..55 all on, ninth byte untouched
+  for (let i = 0; i < 56; i++) assert.ok(buyAfter[i >> 3] & (1 << (i & 7)), `purchase bit ${i} missing`);
+  assert.equal(buyAfter[8], buyBefore[8], 'ninth purchase byte changed');
+  assert.ok(Object.values(perfBox.checksums()).every(Boolean));
+  ok(`max parts installs ${families} families and all 56 purchase bits`);
+
   // bare profile path
   const rawBytes = new Uint8Array(fs.readFileSync(rawPath));  const rawSave = new N.CareerSave(rawBytes);
   assert.ok(rawSave.checksums().a);
